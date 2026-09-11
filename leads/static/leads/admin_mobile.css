@@ -1,0 +1,478 @@
+/* ==========================================================
+   VITRE Leads — Django Admin Responsive
+   Mobile em cards + desktop sem scroll horizontal
+   ========================================================== */
+
+
+/* ==========================================================
+   DESKTOP
+   ========================================================== */
+
+@media (min-width: 1200px) {
+
+    #changelist .results {
+        overflow-x: visible;
+    }
+
+    #result_list {
+        width: 100%;
+        table-layout: fixed;
+    }
+
+    #result_list th,
+    #result_list td {
+        padding-left: 6px;
+        padding-right: 6px;
+        vertical-align: middle;
+    }
+
+    /* Prospect */
+    #result_list .column-prospect,
+    #result_list .field-prospect {
+        width: 15%;
+        white-space: normal;
+        word-break: break-word;
+    }
+
+    /* Segmento */
+    #result_list .column-segmento_atual,
+    #result_list .field-segmento_atual {
+        width: 12%;
+    }
+
+    #result_list .field-segmento_atual select {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+
+    /* Status */
+    #result_list .column-status_editavel,
+    #result_list .field-status_editavel {
+        width: 13%;
+    }
+
+    #result_list .field-status_editavel select {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+
+    /* Retorno */
+    #result_list .column-retorno_followup,
+    #result_list .field-retorno_followup {
+        width: 10%;
+        white-space: normal;
+    }
+
+    /* Canal */
+    #result_list .column-canal,
+    #result_list .field-canal {
+        width: 8%;
+        white-space: normal;
+    }
+
+    /* Criado em */
+    #result_list .column-criado_em,
+    #result_list .field-criado_em {
+        width: 12%;
+        white-space: normal;
+        font-size: 11px;
+    }
+
+    /* Botões */
+    #result_list .column-enviar_modelo_lista,
+    #result_list .field-enviar_modelo_lista,
+    #result_list .column-enviar_proposta_lista,
+    #result_list .field-enviar_proposta_lista,
+    #result_list .column-abrir_whatsapp_lista,
+    #result_list .field-abrir_whatsapp_lista {
+        width: 10%;
+        white-space: normal;
+    }
+
+    #result_list .field-enviar_modelo_lista a,
+    #result_list .field-enviar_proposta_lista a,
+    #result_list .field-abrir_whatsapp_lista a {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+
+        padding: 5px 5px !important;
+
+        text-align: center;
+        white-space: normal !important;
+
+        font-size: 11px;
+    }
+}
+
+
+/* ==========================================================
+   MOBILE
+   ========================================================== */
+
+@media (max-width: 1199px) {
+
+    /* ------------------------------------------------------
+       ESTRUTURA GERAL
+       ------------------------------------------------------ */
+
+    html,
+    body {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+
+    #container,
+    #content,
+    #content-main,
+    #changelist,
+    #changelist-form {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    #content {
+        padding: 12px;
+    }
+
+
+    /* ------------------------------------------------------
+       BUSCA
+       ------------------------------------------------------ */
+
+    #changelist-search {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    #changelist-search div {
+        display: flex;
+        gap: 8px;
+        width: 100%;
+    }
+
+    #changelist-search input[type="text"] {
+        flex: 1;
+        width: auto;
+        min-width: 0;
+    }
+
+
+    /* ------------------------------------------------------
+       AÇÕES EM MASSA
+       ------------------------------------------------------ */
+
+    .actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .actions select {
+        flex: 1;
+        min-width: 0;
+    }
+
+
+    /* ------------------------------------------------------
+       CHANGELIST
+       Filtro vem antes da lista
+       ------------------------------------------------------ */
+
+    #changelist {
+        display: flex;
+        flex-direction: column;
+    }
+
+    #changelist-filter {
+        order: 1;
+
+        width: 100% !important;
+        max-width: 100% !important;
+
+        margin: 0 0 14px !important;
+
+        box-sizing: border-box;
+    }
+
+    #changelist-form {
+        order: 2;
+    }
+
+
+    /* ------------------------------------------------------
+       FILTROS MAIS COMPACTOS
+       ------------------------------------------------------ */
+
+    #changelist-filter h2 {
+        margin: 0;
+    }
+
+    #changelist-filter h3 {
+        margin-top: 10px;
+        margin-bottom: 4px;
+    }
+
+    #changelist-filter ul {
+        display: flex;
+        flex-wrap: wrap;
+
+        gap: 4px 8px;
+
+        margin-bottom: 8px;
+    }
+
+    #changelist-filter li {
+        width: auto;
+        margin: 0;
+    }
+
+    #changelist-filter li a {
+        display: inline-block;
+
+        padding: 3px 5px;
+
+        font-size: 12px;
+    }
+
+
+    /* ------------------------------------------------------
+       REMOVE SCROLL HORIZONTAL
+       ------------------------------------------------------ */
+
+    #changelist .results {
+        overflow: visible;
+        width: 100%;
+    }
+
+    .results,
+    #result_list,
+    #changelist,
+    #changelist-form {
+        width: 100%;
+        max-width: 100%;
+
+        overflow-x: hidden !important;
+
+        box-sizing: border-box;
+    }
+
+
+    /* ------------------------------------------------------
+       TABELA VIRA CARDS
+       ------------------------------------------------------ */
+
+    #result_list {
+        display: block;
+
+        width: 100%;
+
+        border: 0;
+    }
+
+    #result_list thead {
+        display: none;
+    }
+
+    #result_list tbody {
+        display: block;
+
+        width: 100%;
+    }
+
+    #result_list tbody tr {
+        display: grid;
+        position: relative;
+
+        grid-template-columns:
+            minmax(0, 1fr)
+            minmax(0, 1fr);
+
+        gap: 8px;
+
+        width: 100%;
+
+        box-sizing: border-box;
+
+        margin: 0 0 12px;
+        padding: 12px;
+
+        border: 1px solid var(--border-color, #ddd);
+        border-radius: 10px;
+
+        background: var(--body-bg, #fff);
+    }
+
+    #result_list tbody td,
+    #result_list tbody th {
+        display: block;
+
+        width: auto !important;
+        min-width: 0 !important;
+        max-width: none !important;
+
+        padding: 0;
+
+        border: 0;
+
+        box-sizing: border-box;
+
+        white-space: normal;
+    }
+
+
+    /* ------------------------------------------------------
+       CHECKBOX
+       ------------------------------------------------------ */
+
+    #result_list .action-checkbox {
+        position: absolute;
+
+        margin: 2px 0 0 2px;
+    }
+
+
+    /* ------------------------------------------------------
+       PROSPECT
+       ------------------------------------------------------ */
+
+    #result_list .field-prospect {
+        grid-column: 1 / -1;
+
+        padding-left: 26px;
+
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1.25;
+    }
+
+    #result_list .field-prospect a {
+        display: block;
+
+        word-break: break-word;
+    }
+
+
+    /* ------------------------------------------------------
+       SEGMENTO / STATUS
+       ------------------------------------------------------ */
+
+    #result_list .field-segmento_atual {
+        grid-column: 1;
+    }
+
+    #result_list .field-status_editavel {
+        grid-column: 2;
+    }
+
+    #result_list .field-segmento_atual select,
+    #result_list .field-status_editavel select {
+        width: 100% !important;
+
+        min-width: 0 !important;
+        max-width: 100% !important;
+
+        box-sizing: border-box;
+
+        font-size: 12px;
+
+        padding: 7px 6px;
+    }
+
+
+    /* ------------------------------------------------------
+       RETORNO
+       ------------------------------------------------------ */
+
+    #result_list .field-retorno_followup {
+        grid-column: 1 / -1;
+    }
+
+    #result_list .field-retorno_followup span {
+        display: block !important;
+
+        width: 100%;
+
+        box-sizing: border-box;
+
+        text-align: center;
+
+        padding: 7px 8px !important;
+    }
+
+
+    /* ------------------------------------------------------
+       DADOS SECUNDÁRIOS
+       ------------------------------------------------------ */
+
+    #result_list .field-canal,
+    #result_list .field-criado_em {
+        display: none !important;
+    }
+
+
+    /* ------------------------------------------------------
+       BOTÕES
+       ------------------------------------------------------ */
+
+    #result_list .field-enviar_modelo_lista,
+    #result_list .field-enviar_proposta_lista,
+    #result_list .field-abrir_whatsapp_lista {
+        min-width: 0;
+
+        text-align: center;
+    }
+
+    #result_list .field-enviar_modelo_lista {
+        grid-column: 1;
+    }
+
+    #result_list .field-enviar_proposta_lista {
+        grid-column: 2;
+    }
+
+    #result_list .field-abrir_whatsapp_lista {
+        grid-column: 1 / -1;
+    }
+
+    #result_list .field-enviar_modelo_lista a,
+    #result_list .field-enviar_proposta_lista a,
+    #result_list .field-abrir_whatsapp_lista a {
+        display: block !important;
+
+        width: 100%;
+
+        box-sizing: border-box;
+
+        padding: 9px 6px !important;
+
+        text-align: center;
+
+        font-size: 12px;
+        font-weight: 700;
+
+        white-space: normal !important;
+    }
+
+
+    /* ------------------------------------------------------
+       FORMULÁRIO DE INTERAÇÃO
+       ------------------------------------------------------ */
+
+    .form-row {
+        padding: 10px 0;
+    }
+
+    .form-row select,
+    .form-row input,
+    .form-row textarea {
+        max-width: 100%;
+
+        box-sizing: border-box;
+    }
+}

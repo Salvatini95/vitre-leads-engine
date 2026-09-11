@@ -645,6 +645,11 @@ class RetornoFollowupFilter(admin.SimpleListFilter):
 class InteracaoAdmin(admin.ModelAdmin):
     form = InteracaoAdminForm
 
+    class Media:
+        css = {
+            "all": ("leads/admin_mobile.css",)
+        }
+
     def get_urls(self):
         urls = super().get_urls()
         custom_urls = [
@@ -818,7 +823,7 @@ class InteracaoAdmin(admin.ModelAdmin):
             )
 
         return format_html(
-            '<select onchange="window.location.href=this.value;" '
+            '<select aria-label="Segmento" onchange="window.location.href=this.value;" '
             'style="min-width:150px;padding:4px 6px;">{}</select>',
             format_html("".join(options)),
         )
@@ -904,7 +909,7 @@ class InteracaoAdmin(admin.ModelAdmin):
             )
 
         return format_html(
-            '<select onchange="window.location.href=this.value;" '
+            '<select aria-label="Status" onchange="window.location.href=this.value;" '
             'style="min-width:155px;padding:5px 8px;'
             'background:{};color:white;font-weight:600;'
             'border:0;border-radius:6px;">{}</select>',
