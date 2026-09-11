@@ -8,7 +8,7 @@ usada várias vezes por dia e o que importa é velocidade.
 from __future__ import annotations
 
 from django.contrib import admin, messages
-from django.db.models import BooleanField, Case, Q, QuerySet, Value, When
+from django.db.models import BooleanField, Case, QuerySet, Value, When
 from django.utils import timezone
 
 from leads.models import (
@@ -21,6 +21,7 @@ from leads.models import (
     StatusFunil,
     Varredura,
 )
+from leads.utils.telefone import TipoTelefone
 
 
 class SocioInline(admin.TabularInline):
@@ -119,22 +120,32 @@ class ProspectVerificacaoAdmin(admin.ModelAdmin):
     Ordenação por TELEFONE primeiro, não por avaliações. A Foursquare não dá
     nota nem contagem de avaliação sem campo pago (`FOURSQUARE_CAMPOS_PRO`
     segue False), então `-total_avaliacoes` ordenaria 400 nulos — ordem
-    aleatória na prática. Telefone preenchido (158 dos 400) é o único sinal
-    disponível de que vale gastar revisão manual: sem telefone não há como
-    abordar, mesmo que o lead se confirme.
+    aleatória na prática. Telefone é o único sinal disponível de que vale
+    gastar revisão manual: sem telefone não há como abordar, mesmo que o lead
+    se confirme.
+
+    Mas "tem telefone" aqui é FORMATO DE CELULAR, não campo preenchido. Os
+    158 preenchidos de Maringá continham 101 fixos: ordenar por campo não
+    vazio colocava no topo da fila uma centena de números que não abrem
+    conversa por mensagem, que é o único canal da abordagem. O critério
+    passou a ser `telefone_tipo == CELULAR`.
+
+    O que a coluna NÃO diz: que o número atende ou que tem WhatsApp. Isso só
+    se confirma contatando a linha, e o protocolo não faz contato automático.
     """
 
     list_display = (
         "nome",
-        "tem_telefone",
+        "tem_celular",
         "telefone",
+        "telefone_tipo",
         "tag_verificacao",
         "segmento",
         "endereco",
         "website_url",
         "site_evidencia",
     )
-    list_filter = ("origem", "segmento", "cidade")
+    list_filter = ("telefone_tipo", "origem", "segmento", "cidade")
     search_fields = ("nome", "telefone", "endereco")
     readonly_fields = ("origem", "origem_id", "criado_em", "atualizado_em", "varredura")
     actions = ("confirmar_sem_site", "descartar_tem_site")
@@ -143,21 +154,22 @@ class ProspectVerificacaoAdmin(admin.ModelAdmin):
     def tag_verificacao(self, obj: Prospect) -> str:
         return obj.tag_verificacao
 
-    @admin.display(description="Tel?", boolean=True, ordering="_tem_telefone")
-    def tem_telefone(self, obj: Prospect) -> bool:
-        return bool(obj.telefone)
+    @admin.display(description="Celular?", boolean=True, ordering="_tem_celular")
+    def tem_celular(self, obj: Prospect) -> bool:
+        """Formato de celular válido. Não afirma que a linha tem WhatsApp."""
+        return obj.telefone_e_celular
 
     def get_queryset(self, request) -> QuerySet[ProspectVerificacao]:
         # Sem `super()` de propósito: `ModelAdmin.get_queryset` já aplica
         # `order_by` antes de qualquer anotação existir, e ordenar por
-        # `_tem_telefone` ali estoura FieldError. Aqui a ordem é anotar →
+        # `_tem_celular` ali estoura FieldError. Aqui a ordem é anotar →
         # ordenar.
         qs = self.model._default_manager.get_queryset().filter(
             status_funil=StatusFunil.VERIFICAR_SITE
         )
         qs = qs.annotate(
-            _tem_telefone=Case(
-                When(~Q(telefone=""), then=Value(True)),
+            _tem_celular=Case(
+                When(telefone_tipo=TipoTelefone.CELULAR, then=Value(True)),
                 default=Value(False),
                 output_field=BooleanField(),
             )
@@ -167,8 +179,8 @@ class ProspectVerificacaoAdmin(admin.ModelAdmin):
     def get_ordering(self, request) -> tuple[str, ...]:
         # Em `get_ordering` e não no atributo `ordering` porque o system check
         # admin.E033 valida `ordering` contra campos do modelo, e
-        # `_tem_telefone` é anotação.
-        return ("-_tem_telefone", "nome")
+        # `_tem_celular` é anotação.
+        return ("-_tem_celular", "nome")
 
     def has_add_permission(self, request) -> bool:
         # A fila nasce da captação, nunca da mão.
@@ -222,6 +234,7 @@ class VarreduraAdmin(admin.ModelAdmin):
         "total_encontrados",
         "total_sem_site",
         "total_novos",
+        "total_fechados",
         "total_requisicoes",
         "criado_em",
     )

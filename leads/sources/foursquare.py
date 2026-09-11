@@ -288,6 +288,36 @@ class FoursquareSource(FonteDeProspects):
 
         return ResultadoBusca(candidatos=candidatos, total_requisicoes=requisicoes)
 
+    async def consultar_fechamento(self, place_id: str) -> str:
+        """Evidência de fechamento de UM lugar já captado, ou string vazia.
+
+        Usa o endpoint de detalhes (`/places/{id}`), não o de busca: a busca
+        só devolve quem está no recorte geográfico e na categoria de hoje, e
+        um estabelecimento que fechou pode ter saído dos dois — some da busca
+        sem nunca ser marcado como fechado. Por id, ele responde.
+
+        Verificado contra a API: o detalhe pedindo apenas
+        `fsq_place_id,name,date_closed` responde 200 sem consumir crédito
+        pago. Vale 1 requisição da franquia, como qualquer outra chamada.
+
+        String vazia significa "a Foursquare não afirma que fechou" — não é o
+        mesmo que "confirmado aberto". A base deles quase não preenche esse
+        campo para pequeno negócio no Brasil.
+
+        Raises:
+            httpx.HTTPStatusError: 404 (id que a base não conhece mais) e
+                demais erros sobem para o chamador decidir.
+        """
+        resposta = await self._client.get(
+            f"{self._api_base}/places/{place_id}",
+            params={"fields": "fsq_place_id,name,date_closed"},
+            headers=self._headers(),
+        )
+        resposta.raise_for_status()
+
+        data = (resposta.json().get("date_closed") or "").strip()
+        return f"date_closed={data}" if data else ""
+
     def _headers(self) -> dict[str, str]:
         """Estilo de auth conforme a geração da API — ver observação 5."""
         if self._legado_v3:
@@ -359,6 +389,11 @@ class FoursquareSource(FonteDeProspects):
 
             nota = lugar.get("rating")
 
+            # A API omite `date_closed` quando é nulo — o campo simplesmente
+            # não aparece no objeto. Ausência aqui significa "a Foursquare não
+            # afirmou que fechou", nunca "está aberto".
+            data_fechamento = (lugar.get("date_closed") or "").strip()
+
             candidatos.append(
                 ProspectCandidate(
                     origem=FoursquareSource.ORIGEM,
@@ -373,7 +408,10 @@ class FoursquareSource(FonteDeProspects):
                     categoria=(categorias[0].get("name", "") if categorias else ""),
                     # `date_closed` preenchido é o equivalente do
                     # CLOSED_PERMANENTLY do Google: não há para quem vender.
-                    ativo=not lugar.get("date_closed"),
+                    ativo=not data_fechamento,
+                    fechado_evidencia=(
+                        f"date_closed={data_fechamento}" if data_fechamento else ""
+                    ),
                 )
             )
         return candidatos

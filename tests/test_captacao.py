@@ -39,11 +39,16 @@ def quadrante(db):
     )
 
 
-def _fake_coletar(candidatos, vereditos, requisicoes=1):
+def _fake_coletar(candidatos, vereditos, requisicoes=1, fechados=0):
     """Substitui a parte de rede por um retorno fixo."""
 
     async def _coletar(texto_query, celula, fonte=None, segmento=None):
-        return candidatos, requisicoes, vereditos
+        return captacao.Coleta(
+            candidatos=candidatos,
+            requisicoes=requisicoes,
+            vereditos=vereditos,
+            fechados=fechados,
+        )
 
     return _coletar
 
@@ -117,7 +122,7 @@ def test_recaptura_atualiza_fato_do_mundo(monkeypatch, quadrante):
         origem="GOOGLE_PLACES",
         origem_id="p1",
         nome="Salão Bella",
-        telefone="(44) 9999-9999",
+        telefone="(44) 99912-0926",
         website_url="https://salaobella.com.br",
         rating=4.9,
         total_avaliacoes=300,
@@ -125,7 +130,8 @@ def test_recaptura_atualiza_fato_do_mundo(monkeypatch, quadrante):
     _rodar(monkeypatch, [novo], [SEM_SITE], quadrante)
 
     prospect = Prospect.objects.get()
-    assert prospect.telefone == "(44) 9999-9999"
+    # Gravado normalizado, não como veio da fonte.
+    assert prospect.telefone == "+5544999120926"
     assert prospect.total_avaliacoes == 300
 
 

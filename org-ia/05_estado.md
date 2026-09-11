@@ -3,7 +3,7 @@
 > Documento de continuidade. Quem assumir a próxima sessão (Opus, Son Coder ou
 > Codex) lê este arquivo primeiro.
 
-**Última atualização:** 2026-08-13
+**Última atualização:** 2026-08-14
 **Fase:** 1 — captação e qualificação (concluída) + fonte de contingência
 
 ---
@@ -224,6 +224,110 @@ fontes — é comportamento herdado do cliente do Google, não regressão. Numa
 API que responde 429 por falta de crédito, isso subestima o gasto real. Se a
 franquia da Foursquare virar restrição de verdade, corrigir antes.
 
+## Precisão da captação (sessão de 2026-08-14)
+
+Disparada por uma revisão manual que encontrou, na fila, um estabelecimento
+permanentemente fechado.
+
+### Fechados: o filtro já existia — a fonte é que não sabe
+
+**O achado que muda o diagnóstico:** o corte de fechados nunca esteve
+faltando. `_coletar` já descartava candidato com `date_closed` desde a
+integração da Foursquare, e `date_closed` já estava no `fields` da requisição.
+O salão fechado atravessou porque **a Foursquare não marcou aquele registro
+como fechado**. Não é bug de código; é lacuna da base deles.
+
+Confirmado contra a API real (geração `places-api.foursquare.com`,
+`X-Places-Api-Version: 2025-06-17`), e vale registrar porque contradiz o
+palpite óbvio:
+
+- `date_closed` é o nome certo e é campo **gratuito**. `closed_bucket` e
+  `closed_status` (nomes da v3) devolvem **400**.
+- A API **valida** nome de campo — `campo_que_nao_existe` devolve 400. Ou
+  seja: o campo estava mesmo sendo pedido, não silenciosamente ignorado.
+- A resposta **omite** `date_closed` quando é nulo, em vez de mandar `null`.
+- Nenhum dos resultados de Maringá amostrados trouxe o campo preenchido.
+
+**Consequência prática:** `date_closed` vazio significa "a Foursquare não
+afirma que fechou", e **nunca** "está aberto". Confirmar fechamento continua
+sendo trabalho da revisão manual — o filtro automático só pega o caso fácil.
+
+### O que mudou no código
+
+- `Varredura.total_fechados` — contador próprio, separado de dedup e de
+  banimento. Sem ele o descarte é silencioso, e "fonte devolvendo lixo
+  fechado" fica indistinguível de "fonte com muita repetição". `captar`
+  imprime o número quando é maior que zero.
+- Google Places passou a cortar **`CLOSED_TEMPORARILY` além de
+  `CLOSED_PERMANENTLY`** — antes só o permanente. Mudança deliberada de
+  comportamento: `date_closed` da Foursquare não separa permanente de
+  temporário, e critérios diferentes por fonte fariam a fila de uma parecer
+  mais suja que a da outra sem motivo aparente.
+- `ProspectCandidate.fechado_evidencia` guarda o que a fonte disse
+  (`date_closed=2024-03-11`, `businessStatus=...`) e vai para o log.
+
+### Os 400 já captados: limitação assumida
+
+**Não é respondível offline.** O descarte por fechamento acontece na coleta,
+antes da gravação: o candidato fechado nunca virou linha e nenhuma coluna
+guardou o `date_closed` de quem passou. Não há histórico a reler.
+
+`manage.py verificar_fechados` existe para isso, com o gasto explícito:
+
+- **Sem flag:** não toca a rede, só explica a limitação acima.
+- **`--consultar-api`:** 1 requisição por prospect no endpoint de detalhes
+  (`/places/{id}`, verificado: 200 e gratuito). **Não recaptura** — pergunta
+  por id que já está no banco, então não cria nem duplica prospect.
+- **`--confirmar`:** sem isto, `--consultar-api` só estima o custo e para.
+- **`--limite N`:** amostrar antes de gastar.
+- O gasto é registrado como `Varredura` para a franquia não ficar furada.
+- 404 (id sumiu da base) é marcado como **indício**, não descarte — a
+  Foursquare também remove duplicata e registro ruim.
+
+**Não foi executado nesta sessão**, conforme a instrução de não gastar
+franquia com recaptura. Custo se for rodar: **400 requisições de 10.000**.
+Dado o achado acima (a base quase não preenche o campo), a expectativa é que
+devolva perto de zero — o valor real dele é medir esse "perto de zero".
+
+> Nota de franquia: ~20 requisições foram gastas à mão nesta sessão para
+> confirmar o comportamento da API, e não estão registradas em `Varredura`.
+> O contador do mês está subestimado nesse tanto.
+
+### Telefone: 108 dos 158 não eram celular
+
+A fila contava "158 com telefone" olhando apenas se o campo estava vazio.
+Medido nos 400 do banco local depois de classificar:
+
+| Tipo | Qtd | Serve para abordagem? |
+|---|---|---|
+| `CELULAR` | **50** | sim |
+| `FIXO` | 101 | não — não abre conversa por mensagem |
+| `LEGADO` (celular pré-2016, sem o 9º dígito) | 4 | talvez, à mão |
+| `INVALIDO` (sem DDD) | 3 | talvez, à mão |
+| `VAZIO` | 242 | não |
+
+**108 dos 158 "com telefone" não eram celular de formato válido.** A fila
+priorizava uma centena de fixos à frente de leads acionáveis.
+
+O que mudou:
+
+- `leads/utils/telefone.py` — valida DDD (11–99) + 9 dígitos começando em 9,
+  aceitando as variações de formatação (`+55`, parênteses, traço, espaços).
+- `Prospect.telefone` agora é gravado normalizado em **`+55DDNNNNNNNNN`**.
+- `Prospect.telefone_tipo` classifica o **formato**; a fila ordena por
+  `CELULAR`, não por campo preenchido.
+- Migração `0007` normalizou os 400 existentes. Reversível — ida/volta/ida
+  testada, resultado idêntico.
+
+**Duas coisas que o código não afirma, de propósito:**
+
+1. **Não afirma que o número tem WhatsApp.** `telefone_tipo=CELULAR` é um
+   juízo sobre a *string*, não sobre a linha. Confirmar conta ativa exigiria
+   contatar número sem consentimento — vetado pelo protocolo, e não foi
+   implementado.
+2. **Não insere o 9º dígito nos 4 `LEGADO`.** Inventar dígito produz um
+   número que disca para outra pessoa. Ficam marcados para revisão humana.
+
 ## Decisões tomadas
 
 1. **Places API como fonte primária**, não dataset CNPJ. O critério comercial
@@ -274,12 +378,19 @@ olhar. Nada de código é necessário para começar: a tela está pronta.
 **Onde:** Django Admin → **«Fila de verificação de site»**
 (`ProspectVerificacao`). Já vem filtrada e ordenada.
 
-**Ordem de ataque — começar pelos 158 com telefone.** Eles estão no topo da
-fila por construção. O motivo é econômico: sem telefone não há como abordar
-o lead nem se ele se confirmar sem site, então revisar os 242 sem telefone
-primeiro seria gastar o recurso escasso (seu tempo) no material de menor
-retorno. Os 27 com tag "site checado, confirmar" são os mais rápidos — já há
-`site_evidencia` gravada para ler antes de decidir.
+**Ordem de ataque — começar pelos 50 com celular.** (Era "158 com telefone"
+até 2026-08-14; ver a seção de precisão abaixo — 101 daqueles 158 eram fixos
+e não abrem conversa por mensagem.) Eles estão no topo da fila por
+construção. O motivo é econômico: sem celular não há como abordar o lead nem
+se ele se confirmar sem site, então revisar os demais primeiro seria gastar o
+recurso escasso (seu tempo) no material de menor retorno. Os 27 com tag "site
+checado, confirmar" são os mais rápidos — já há `site_evidencia` gravada para
+ler antes de decidir.
+
+Depois dos 50, a ordem de retorno decrescente é: **4 LEGADO** (celular antigo,
+provável que só falte o 9º dígito — vale conferir à mão), **3 INVALIDO**
+(número sem DDD, dá para deduzir pelo endereço), **101 FIXO** e por fim os
+**242 sem telefone nenhum**.
 
 **Como decidir cada linha:** abrir o nome do estabelecimento no Google/
 Instagram e responder uma pergunta só — tem site próprio?

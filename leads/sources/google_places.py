@@ -57,6 +57,14 @@ _RETRY_AFTER_TETO = 8.0
 _TOKEN_RETRY_TENTATIVAS = 3
 _TOKEN_RETRY_ESPERA = 1.5
 
+# `businessStatus` fora de OPERATIONAL não vira prospect. Os dois entram, e
+# não só o permanente, porque o equivalente da Foursquare (`date_closed`) não
+# separa permanente de temporário — manter só o permanente aqui deixaria as
+# duas fontes com critérios diferentes de "fechado", que é exatamente o tipo
+# de divergência que faz a fila de uma parecer mais suja que a da outra sem
+# ninguém saber por quê. Estabelecimento de portas fechadas não compra site.
+_STATUS_FECHADO = frozenset({"CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY"})
+
 # `nextPageToken` PRECISA vir aqui — ver observação 1 no topo do módulo.
 _FIELD_MASK = ",".join(
     [
@@ -239,6 +247,12 @@ class GooglePlacesSource(FonteDeProspects):
             if not nome:
                 continue
 
+            # Ausente no field mask antigo ou em lugar sem o dado: o Google
+            # omite o campo em vez de mandar OPERATIONAL. Ausência é "não
+            # afirmou que fechou", não "confirmou que está aberto".
+            situacao = lugar.get("businessStatus") or ""
+            fechado = situacao in _STATUS_FECHADO
+
             candidatos.append(
                 ProspectCandidate(
                     origem=GooglePlacesSource.ORIGEM,
@@ -249,8 +263,8 @@ class GooglePlacesSource(FonteDeProspects):
                     website_url=lugar.get("websiteUri", "") or "",
                     rating=lugar.get("rating"),
                     total_avaliacoes=lugar.get("userRatingCount"),
-                    # CLOSED_PERMANENTLY não vira prospect: não há para quem vender.
-                    ativo=lugar.get("businessStatus") != "CLOSED_PERMANENTLY",
+                    ativo=not fechado,
+                    fechado_evidencia=(f"businessStatus={situacao}" if fechado else ""),
                 )
             )
         return candidatos

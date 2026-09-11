@@ -103,7 +103,7 @@ class Command(BaseCommand):
                 )
             )
 
-        totais = {"req": 0, "encontrados": 0, "sem_site": 0, "novos": 0}
+        totais = {"req": 0, "encontrados": 0, "sem_site": 0, "novos": 0, "fechados": 0}
 
         for quadrante in quadrantes:
             try:
@@ -127,11 +127,17 @@ class Command(BaseCommand):
             totais["encontrados"] += varredura.total_encontrados
             totais["sem_site"] += varredura.total_sem_site
             totais["novos"] += varredura.total_novos
+            totais["fechados"] += varredura.total_fechados
 
+            fechados = (
+                f", {varredura.total_fechados} fechados descartados"
+                if varredura.total_fechados
+                else ""
+            )
             self.stdout.write(
                 f"  {quadrante.rotulo}: {varredura.total_encontrados} achados, "
-                f"{varredura.total_sem_site} sem site, {varredura.total_novos} novos "
-                f"({varredura.total_requisicoes} req)"
+                f"{varredura.total_sem_site} sem site, {varredura.total_novos} novos"
+                f"{fechados} ({varredura.total_requisicoes} req)"
             )
 
         self.stdout.write(
@@ -141,4 +147,9 @@ class Command(BaseCommand):
                 f"Custo: {totais['req']} requisições."
             )
         )
+        if totais["fechados"]:
+            self.stdout.write(
+                f"{totais['fechados']} descartado(s) por estarem fechados na fonte "
+                "(não entraram na fila de verificação)."
+            )
         self.stdout.write("Próximo passo: curadoria no Admin (status NOVO).")

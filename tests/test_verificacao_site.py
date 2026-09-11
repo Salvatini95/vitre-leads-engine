@@ -45,7 +45,9 @@ def quadrante(db):
 
 def _fake_coletar(candidatos, vereditos):
     async def _coletar(texto_query, celula, fonte=None, segmento=None):
-        return candidatos, 1, vereditos
+        return captacao.Coleta(
+            candidatos=candidatos, requisicoes=1, vereditos=vereditos
+        )
 
     return _coletar
 
@@ -284,7 +286,7 @@ def test_recaptura_google_nao_mexe_em_status(monkeypatch, quadrante):
 def _semear_fila(monkeypatch, quadrante):
     candidatos = [
         _candidato("FOURSQUARE", "sem_tel_a", telefone=""),
-        _candidato("FOURSQUARE", "com_tel", telefone="(44) 3333-3333"),
+        _candidato("FOURSQUARE", "com_cel", telefone="(44) 99912-0926"),
         _candidato("FOURSQUARE", "sem_tel_b", telefone=""),
     ]
     _rodar(monkeypatch, candidatos, [SEM_URL] * 3, quadrante, "foursquare")
@@ -310,8 +312,8 @@ def test_fila_so_mostra_pendentes(monkeypatch, quadrante):
     assert not qs.filter(origem="GOOGLE_PLACES").exists()
 
 
-def test_fila_ordena_telefone_preenchido_primeiro(monkeypatch, quadrante):
-    """Sem rating/stats (campos pagos), telefone é o único critério útil."""
+def test_fila_ordena_celular_primeiro(monkeypatch, quadrante):
+    """Sem rating/stats (campos pagos), o telefone é o único critério útil."""
     _semear_fila(monkeypatch, quadrante)
 
     from leads.admin import ProspectVerificacaoAdmin
@@ -320,8 +322,31 @@ def test_fila_ordena_telefone_preenchido_primeiro(monkeypatch, quadrante):
     fila = ProspectVerificacaoAdmin(ProspectVerificacao, django_admin.site)
     ordenados = list(fila.get_queryset(None))
 
-    assert ordenados[0].origem_id == "com_tel"
-    assert all(not p.telefone for p in ordenados[1:])
+    assert ordenados[0].origem_id == "com_cel"
+    assert all(not p.telefone_e_celular for p in ordenados[1:])
+
+
+def test_fila_nao_prioriza_fixo(monkeypatch, quadrante):
+    """O bug que motivou a mudança: 101 dos 158 'com telefone' eram fixos.
+
+    Fixo não abre conversa por mensagem, que é o único canal da abordagem.
+    Ordenar por campo preenchido colocava uma centena deles à frente de
+    prospect com celular de verdade.
+    """
+    candidatos = [
+        _candidato("FOURSQUARE", "a_fixo", telefone="(44) 3244-6413"),
+        _candidato("FOURSQUARE", "z_celular", telefone="(44) 99912-0926"),
+    ]
+    _rodar(monkeypatch, candidatos, [SEM_URL] * 2, quadrante, "foursquare")
+
+    from leads.admin import ProspectVerificacaoAdmin
+    from django.contrib import admin as django_admin
+
+    fila = ProspectVerificacaoAdmin(ProspectVerificacao, django_admin.site)
+    ordenados = list(fila.get_queryset(None))
+
+    # O fixo vem primeiro no alfabeto e mesmo assim perde do celular.
+    assert [p.origem_id for p in ordenados] == ["z_celular", "a_fixo"]
 
 
 # --- A trava da aprovação em lote --------------------------------------------

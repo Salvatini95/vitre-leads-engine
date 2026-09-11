@@ -21,6 +21,8 @@ import uuid
 
 from django.db import models
 
+from leads.utils.telefone import TIPO_TELEFONE_CHOICES, TipoTelefone
+
 
 class Segmento(models.TextChoices):
     """Segmentos-alvo da VITRE.
@@ -165,6 +167,15 @@ class Varredura(models.Model):
     total_encontrados = models.PositiveIntegerField(default=0)
     total_sem_site = models.PositiveIntegerField(default=0)
     total_novos = models.PositiveIntegerField(default=0)
+    # Descartados por a fonte declarar o estabelecimento fechado. Contador
+    # SEPARADO de dedup e de banimento de propósito: os três somem da fila
+    # pelo mesmo lugar, e sem separá-los uma fonte que comece a devolver lixo
+    # fechado parece apenas uma fonte com muita repetição.
+    # `total_encontrados` conta o que sobrou depois deste corte.
+    total_fechados = models.PositiveIntegerField(
+        default=0,
+        help_text="Descartados na captação por estarem fechados na fonte.",
+    )
 
     erro = models.TextField(blank=True, default="")
 
@@ -217,9 +228,36 @@ class Prospect(models.Model):
     cidade = models.CharField(max_length=100, blank=True, default="")
     estado = models.CharField(max_length=2, blank=True, default="")
 
+    # Normalizado para `+55DDNNNNNNNNN` na gravação (leads.utils.telefone).
+    # Número que não casou com nenhum formato conhecido fica como veio — some
+    # da contagem de acionáveis, mas continua visível para revisão manual.
     telefone = models.CharField(max_length=30, blank=True, default="")
+    # FORMATO do telefone, não estado da linha. CELULAR aqui significa "o
+    # texto tem formato de celular BR", e nada além disso: se a linha existe,
+    # se atende ou se tem WhatsApp só se sabe contatando, o que o protocolo
+    # não faz automaticamente.
+    telefone_tipo = models.CharField(
+        max_length=10,
+        choices=TIPO_TELEFONE_CHOICES,
+        default=TipoTelefone.VAZIO,
+        db_index=True,
+        help_text="Formato do número. Não afirma que a linha existe ou tem WhatsApp.",
+    )
     instagram = models.CharField(max_length=255, blank=True, default="")
     website_url = models.TextField(blank=True, default="")
+
+    # Marca de fechamento vinda da própria fonte (`date_closed` na Foursquare,
+    # `businessStatus` no Google). Vazio = a fonte não disse que fechou, o que
+    # NÃO é o mesmo que dizer que está aberto: a base da Foursquare tem o
+    # campo, mas quase nunca o preenche para pequeno negócio no Brasil.
+    # Captação nova nem chega a criar prospect fechado; este campo serve à
+    # recheca retroativa (`manage.py verificar_fechados`).
+    fechado_na_fonte = models.CharField(
+        max_length=60,
+        blank=True,
+        default="",
+        help_text="Evidência de fechamento vinda da fonte. Vazio = a fonte não afirmou nada.",
+    )
 
     # Resultado do filtro de qualificação (leads.filters.site_validator).
     # None = ainda não avaliado. False = SEM site real → é o alvo da VITRE.
@@ -284,6 +322,15 @@ class Prospect(models.Model):
     def pendente_de_verificacao(self) -> bool:
         """True enquanto ninguém confirmou à mão a situação do site."""
         return self.status_funil == StatusFunil.VERIFICAR_SITE
+
+    @property
+    def telefone_e_celular(self) -> bool:
+        """True quando o telefone tem FORMATO de celular BR.
+
+        Não afirma que a linha existe, que atende ou que tem WhatsApp — isso
+        exigiria contatar o número sem consentimento.
+        """
+        return self.telefone_tipo == TipoTelefone.CELULAR
 
     @property
     def e_alvo(self) -> bool:

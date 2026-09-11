@@ -12,6 +12,10 @@ Regras de negócio que vivem aqui:
 - `total_requisicoes` é gravado mesmo quando a busca falha no meio.
 - Recaptura não sobrescreve curadoria: prospect com `revisado_manualmente`
   mantém segmento e status.
+- Estabelecimento que a fonte declara fechado não vira Prospect — é cortado
+  na coleta, e contado à parte de dedup e de banimento.
+- Telefone é normalizado para `+55DDNNNNNNNNN` e classificado por FORMATO na
+  gravação (ver `leads.utils.telefone`).
 - Prospect com descarte `banido` não volta ao funil.
 - `termo_busca` guarda o termo da PRIMEIRA captura e não é sobrescrito.
 """
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -33,6 +38,7 @@ from leads.models import Descarte, Prospect, Quadrante, StatusFunil, StatusVarre
 from leads.services.grade import CelulaGrade
 from leads.sources import FONTE_PADRAO, classe_da_fonte, criar_fonte
 from leads.sources.models import BuscaParcialError, ProspectCandidate
+from leads.utils.telefone import analisar as analisar_telefone
 
 logger = logging.getLogger(__name__)
 
@@ -81,18 +87,37 @@ def _montar_query(segmento_rotulo: str, cidade: str, estado: str) -> str:
     return f"{segmento_rotulo} em {cidade} {estado}"
 
 
+@dataclass(frozen=True, slots=True)
+class Coleta:
+    """Saída da parte de rede de uma varredura.
+
+    `vereditos` vem na mesma ordem de `candidatos`. `fechados` são os que a
+    fonte declarou fechados e que por isso NÃO estão em `candidatos` — é
+    contagem de quem foi barrado, não de quem sobrou.
+    """
+
+    candidatos: list[ProspectCandidate]
+    requisicoes: int
+    vereditos: list[SiteVerdict]
+    fechados: int = 0
+
+
 async def _coletar(
     texto_query: str,
     celula: CelulaGrade | None,
     fonte: str = FONTE_PADRAO,
     segmento: str | None = None,
-) -> tuple[list[ProspectCandidate], int, list[SiteVerdict]]:
+) -> Coleta:
     """Parte de rede: busca na fonte e valida o site de cada candidato.
 
-    Devolve (candidatos, requisicoes_consumidas, vereditos) — os vereditos na
-    mesma ordem dos candidatos. Em falha parcial da busca, o que já foi
-    coletado é validado e devolvido mesmo assim, e o erro é propagado depois
-    de o chamador gravar o custo.
+    Estabelecimento que a fonte marca como fechado é descartado AQUI, antes
+    da validação de site e antes de qualquer escrita: não entra na fila de
+    verificação manual, porque não há tempo de revisor a gastar com um
+    negócio que não existe mais. O corte é anterior ao dedup e ao banimento
+    de propósito — os três motivos de sumiço ficam contados em separado.
+
+    Em falha parcial da busca, o que já foi coletado é validado e devolvido
+    mesmo assim, e o erro é propagado depois de o chamador gravar o custo.
 
     A validação de site é idêntica para qualquer fonte: o critério comercial
     ("não tem site") não muda porque o endereço veio de outra API.
@@ -101,13 +126,35 @@ async def _coletar(
         resultado = await cliente.buscar(texto_query, celula, segmento)
 
     candidatos = [c for c in resultado.candidatos if c.ativo]
+    fechados = [c for c in resultado.candidatos if not c.ativo]
+
+    for candidato in fechados:
+        logger.info(
+            "Descartado por fechamento na fonte: %s (%s) — %s",
+            candidato.nome,
+            candidato.origem_id,
+            candidato.fechado_evidencia or "sem evidência declarada",
+        )
+
+    if fechados:
+        logger.info(
+            "%d de %d resultados descartados por estarem fechados na fonte %s",
+            len(fechados),
+            len(resultado.candidatos),
+            fonte,
+        )
 
     async with SiteValidator() as validador:
         vereditos = await asyncio.gather(
             *(validador.validar(c.website_url) for c in candidatos)
         )
 
-    return candidatos, resultado.total_requisicoes, list(vereditos)
+    return Coleta(
+        candidatos=candidatos,
+        requisicoes=resultado.total_requisicoes,
+        vereditos=list(vereditos),
+        fechados=len(fechados),
+    )
 
 
 def _situacao_do_site(
@@ -166,6 +213,7 @@ def _persistir(
             continue
 
         tem_site, status = _situacao_do_site(veredito, site_confiavel)
+        telefone = analisar_telefone(candidato.telefone)
 
         existente = Prospect.objects.filter(
             origem=candidato.origem,
@@ -182,7 +230,8 @@ def _persistir(
                 endereco=candidato.endereco,
                 cidade=varredura.cidade,
                 estado=varredura.estado,
-                telefone=candidato.telefone,
+                telefone=telefone.e164 or candidato.telefone,
+                telefone_tipo=telefone.tipo,
                 website_url=candidato.website_url,
                 tem_site_real=tem_site,
                 site_evidencia=veredito.evidencia,
@@ -199,7 +248,8 @@ def _persistir(
         # nunca toca no que foi decidido por você.
         existente.nome = candidato.nome
         existente.endereco = candidato.endereco
-        existente.telefone = candidato.telefone
+        existente.telefone = telefone.e164 or candidato.telefone
+        existente.telefone_tipo = telefone.tipo
         existente.website_url = candidato.website_url
         existente.tem_site_real = tem_site
         existente.site_evidencia = veredito.evidencia
@@ -270,9 +320,7 @@ def executar_varredura(
     )
 
     try:
-        candidatos, requisicoes, vereditos = asyncio.run(
-            _coletar(texto_query, celula, fonte, segmento)
-        )
+        coleta = asyncio.run(_coletar(texto_query, celula, fonte, segmento))
     except BuscaParcialError as exc:
         # Requisição já consumida conta na franquia mesmo com a busca em erro.
         varredura.total_requisicoes = exc.total_requisicoes
@@ -285,15 +333,16 @@ def executar_varredura(
 
     sem_site, novos = _persistir(
         varredura,
-        candidatos,
-        vereditos,
+        coleta.candidatos,
+        coleta.vereditos,
         site_confiavel=classe_da_fonte(fonte).SITE_CONFIAVEL,
     )
 
-    varredura.total_requisicoes = requisicoes
-    varredura.total_encontrados = len(candidatos)
+    varredura.total_requisicoes = coleta.requisicoes
+    varredura.total_encontrados = len(coleta.candidatos)
     varredura.total_sem_site = sem_site
     varredura.total_novos = novos
+    varredura.total_fechados = coleta.fechados
     varredura.status = StatusVarredura.CONCLUIDA
     varredura.concluido_em = timezone.now()
     varredura.save()

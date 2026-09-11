@@ -34,7 +34,13 @@ class ProspectCandidate:
     # não, no field mask atual). Ainda não persistido em `Prospect` — serve
     # de material de auditoria da curadoria.
     categoria: str = ""
+    # `ativo=False` tira o candidato da captação antes de virar Prospect.
+    # `fechado_evidencia` guarda o que a fonte disse (a data de
+    # `date_closed`, o valor de `businessStatus`) para o log poder explicar
+    # POR QUE alguém sumiu — descarte silencioso e bug de parsing são
+    # indistinguíveis quando só sobra o booleano.
     ativo: bool = True
+    fechado_evidencia: str = ""
 
 
 @dataclass(frozen=True, slots=True)
