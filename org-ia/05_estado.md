@@ -3,7 +3,7 @@
 > Documento de continuidade. Quem assumir a próxima sessão (Opus, Son Coder ou
 > Codex) lê este arquivo primeiro.
 
-**Última atualização:** 2026-08-14
+**Última atualização:** 2026-09-02
 **Fase:** 1 — captação e qualificação (concluída) + fonte de contingência
 
 ---
@@ -437,3 +437,370 @@ teste do pipeline. Anotar o resultado aqui na próxima sessão.
   **não existem neste repo** (nem em `~/.claude/scripts/`). O health check de
   início de sessão foi feito na mão: `git log` / `git status` / `git diff`.
   Criar os scripts é item de protocolo em aberto.
+
+
+---
+
+# ATUALIZAÇÃO OPERACIONAL — 2026-09-02
+
+> Esta seção representa o estado atual do projeto e prevalece sobre trechos
+> históricos anteriores deste documento quando houver divergência.
+
+## CRM manual de prospecção — operacional
+
+O Django Admin deixou de ser apenas uma fila de verificação e agora também
+funciona como mini-CRM operacional para prospecção manual da VITRE.
+
+A regra central permanece inalterada:
+
+**NENHUMA mensagem é enviada automaticamente.**
+
+O sistema apenas prepara a mensagem e abre o WhatsApp. O envio continua
+dependendo de ação humana explícita.
+
+### Segmentos
+
+Foi incluído:
+
+- `BARBEARIA`
+
+A Foursquare foi ajustada para não misturar mais barbearias com `SALAO`.
+
+Mapeamento atual relevante:
+
+- `SALAO` → Hair Salon + categoria genérica de beleza
+- `BARBEARIA` → Barbershop
+
+Migration relacionada:
+
+- `0008_alter_prospect_segmento_alter_varredura_segmento.py`
+
+## Status comerciais atuais
+
+O funil agora possui:
+
+- `VERIFICAR_SITE` — Verificar site (pendente)
+- `NOVO` — Novo (curadoria)
+- `INICIAR` — A iniciar
+- `EM_ANDAMENTO` — Em andamento
+- `SEM_RESPOSTA` — Sem resposta
+- `NUMERO_INVALIDO` — Número inválido
+- `REMARKETING` — Remarketing
+- `CONVERTIDO` — Convertido
+- `DESCARTADO` — Descartado
+
+Migrations relacionadas:
+
+- `0009_alter_prospect_status_funil.py`
+- `0010_alter_prospect_status_funil.py`
+
+### Semântica operacional
+
+`EM_ANDAMENTO`
+: cliente respondeu ou existe conversa comercial ativa.
+
+`SEM_RESPOSTA`
+: primeira abordagem foi realizada, número é utilizável, mas não houve resposta.
+
+`NUMERO_INVALIDO`
+: número incorreto, inexistente ou inútil para a abordagem.
+
+`REMARKETING`
+: ciclo inicial esfriou, mas o lead ainda pode ser retomado futuramente.
+
+`CONVERTIDO`
+: venda fechada.
+
+`DESCARTADO`
+: lead encerrado comercialmente.
+
+Os status terminais:
+
+- `CONVERTIDO`
+- `DESCARTADO`
+- `NUMERO_INVALIDO`
+
+fazem:
+
+- `ativo_no_funil=False`
+- `proximo_contato_em=None`
+
+Logo, não permanecem gerando follow-up.
+
+## Interações como mini-CRM
+
+A listagem de `Interacao` agora permite operar o funil sem abrir cada registro.
+
+Recursos implementados:
+
+- dropdown editável de segmento;
+- dropdown editável de status;
+- cores diferentes por status;
+- alteração salva diretamente no `Prospect`;
+- filtro por canal;
+- filtro por segmento;
+- filtro por status;
+- botão para WhatsApp;
+- botão `Enviar modelo`;
+- botão `Enviar proposta`;
+- coluna visual de próximo retorno.
+
+As alterações manuais também marcam:
+
+- `revisado_manualmente=True`
+
+para evitar que uma recaptura futura desfaça a curadoria humana.
+
+## Follow-up
+
+`Prospect.proximo_contato_em` passou a ser utilizado operacionalmente.
+
+Na listagem de Interações:
+
+- retorno futuro → data normal;
+- retorno amanhã → badge amarelo;
+- retorno hoje → destaque;
+- retorno vencido → badge vermelho;
+- status terminal → `—`.
+
+Existe alerta no topo quando há contatos vencidos.
+
+O alerta possui link **Ver agora**, que aplica o filtro:
+
+- `Retorno pendente`
+
+Também existem filtros para:
+
+- retorno pendente;
+- retorno agendado;
+- sem data de retorno.
+
+## WhatsApp
+
+### Regra
+
+O Django **não envia WhatsApp**.
+
+Ele somente:
+
+1. identifica o número;
+2. gera a copy adequada à etapa;
+3. monta a URL `wa.me`;
+4. abre o WhatsApp;
+5. o operador revisa;
+6. o operador envia manualmente.
+
+Os links passaram a abrir em nova aba (`target="_blank"`), mantendo o Django
+aberto como painel operacional.
+
+Fluxo desejado:
+
+- Aba 1 → Django Admin
+- Aba 2 → WhatsApp
+
+## Fluxo comercial atual
+
+### Etapa 1 — primeira abordagem
+
+A abordagem deixou de ser um bloco comercial com preço + link + benefícios.
+
+Agora a mensagem é curta, conversacional e explica claramente que o serviço
+oferecido é um **site**, evitando o termo amplo “presença digital”.
+
+Exemplo conceitual:
+
+- apresentação breve;
+- descoberta do negócio;
+- informação de que desenvolve sites para negócios locais;
+- benefício contextual;
+- pergunta: “Posso te mandar o link também?”
+
+O operador envia manualmente junto com um print do template adequado.
+
+Não há preço na primeira mensagem.
+
+Não há link automaticamente na primeira mensagem.
+
+### Etapa 2 — cliente aceitou ver
+
+Quando o cliente responde algo como:
+
+- “manda”
+- “pode”
+- “quero ver”
+- “como fica?”
+
+o lead passa para:
+
+- `EM_ANDAMENTO`
+
+Na tabela aparece:
+
+- `Enviar modelo`
+
+Templates atuais:
+
+Barbearia:
+`https://vitre-storefront.salvatiniguilherme.workers.dev/barber-demo`
+
+Beleza / ÉLARA:
+`https://d2604417.vitre-estetica-01-elara.pages.dev/`
+
+A mensagem explica que o modelo é demonstrativo e que a versão final será
+personalizada para o negócio.
+
+### Etapa 3 — gostou / perguntou preço
+
+Para lead em `EM_ANDAMENTO`, existe:
+
+- `Enviar proposta`
+
+Oferta atual:
+
+- site estático: R$ 59,90/mês
+- site animado: R$ 69,90/mês
+- anual: R$ 500/ano
+- domínio separado
+
+A copy permanece curta e conversacional.
+
+### Sem resposta
+
+`SEM_RESPOSTA` possui mensagem própria de segunda abordagem.
+
+Ela não repete toda a apresentação inicial.
+
+O objetivo é lembrar o contato anterior e retomar a conversa de maneira curta.
+
+### Em andamento
+
+Também existe mensagem de continuidade para conversas que já começaram.
+
+## Estado técnico validado
+
+Validação executada após as alterações:
+
+```text
+python manage.py check
+System check identified no issues (0 silenced).
+```
+
+Suíte de testes:
+
+```text
+137 passed
+```
+
+Executada novamente após as alterações principais e permaneceu verde.
+
+Também validado:
+
+```text
+python manage.py makemigrations --check
+No changes detected
+```
+
+Migrations aplicadas localmente:
+
+- `0001` a `0010` — todas aplicadas.
+
+## Arquivos alterados nesta rodada
+
+Versionados modificados:
+
+- `leads/admin.py`
+- `leads/models.py`
+- `leads/sources/foursquare.py`
+
+Novas migrations:
+
+- `leads/migrations/0008_alter_prospect_segmento_alter_varredura_segmento.py`
+- `leads/migrations/0009_alter_prospect_status_funil.py`
+- `leads/migrations/0010_alter_prospect_status_funil.py`
+
+Backups temporários `leads/admin.py.bak-*` foram removidos antes do fechamento.
+
+## Débito técnico identificado
+
+`leads/admin.py` chegou a aproximadamente **1.219 linhas**.
+
+Não refatorar antes de validar comercialmente o fluxo.
+
+Depois da primeira rodada real de uso, considerar extrair:
+
+- geração de copies;
+- URLs de WhatsApp;
+- regras de follow-up;
+- componentes/helpers do Admin;
+- lógica comercial específica por segmento.
+
+Objetivo da futura refatoração:
+
+- reduzir responsabilidade do `admin.py`;
+- evitar duplicação de `_mensagem_whatsapp`;
+- facilitar testes do fluxo comercial;
+- manter comportamento atual sem regressão.
+
+Não existe, até esta atualização, regra formal encontrada no repositório determinando limite de linhas por arquivo. A refatoração é uma decisão de manutenibilidade, não requisito documental atual.
+
+## Situação real do Git
+
+A informação histórica anterior de que o repositório possuía zero commits está desatualizada.
+
+Estado verificado em 2026-09-02:
+
+```text
+bbb1de8 feat: filtro de fechados (Foursquare+Google) e validação de telefone celular BR
+9086743 feat: bootstrap Fase 1 + fonte Foursquare com fila de verificação manual
+```
+
+Branch atual:
+
+```text
+master
+```
+
+Portanto já existem **2 commits** no histórico.
+
+Commits continuam sendo feitos manualmente e assinados via GPG no terminal. O agente não deve criar commits automaticamente.
+
+## Próximos blocos — NÃO IMPLEMENTADOS
+
+### Responsividade mobile
+
+Próxima evolução planejada:
+
+- adaptar o Django Admin para operação confortável em celular;
+- priorizar lista de interações, status, retorno e botões comerciais;
+- manter fluxo utilizável em telas pequenas.
+
+### Servidor online
+
+Depois da responsividade, avaliar hospedagem do Django para permitir operação fora do computador local.
+
+Objetivo:
+
+- acessar o CRM de qualquer lugar;
+- prospectar pelo celular ou notebook;
+- não depender de `127.0.0.1`.
+
+A arquitetura/hospedagem ainda não foi decidida.
+
+Não criar VPS/infra antes dessa decisão.
+
+## Prioridade operacional imediata
+
+O sistema já está suficiente para iniciar prospecção real.
+
+Prioridade agora:
+
+1. utilizar a fila;
+2. realizar abordagens manualmente;
+3. registrar respostas;
+4. usar follow-ups;
+5. medir taxa de resposta;
+6. medir quantos pedem o modelo;
+7. medir quantos perguntam preço;
+8. medir conversões.
+
+Evitar continuar adicionando funcionalidades sem necessidade observada no uso real.

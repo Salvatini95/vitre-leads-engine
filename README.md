@@ -54,6 +54,7 @@ uv run python manage.py captar --segmento SALAO --dry-run
 
 # 3. Captar
 uv run python manage.py captar --segmento SALAO
+uv run python manage.py captar --segmento BARBEARIA
 uv run python manage.py captar --segmento ESTETICA
 uv run python manage.py captar --segmento NAIL
 uv run python manage.py captar --segmento LASH
@@ -62,7 +63,7 @@ uv run python manage.py captar --segmento LASH
 uv run python manage.py runserver     # → http://localhost:8000/admin
 ```
 
-Segmentos: `SALAO`, `ESTETICA`, `NAIL`, `LASH`, `SOBRANCELHA`, `OUTRO`.
+Segmentos: `SALAO`, `BARBEARIA`, `ESTETICA`, `NAIL`, `LASH`, `SOBRANCELHA`, `OUTRO`.
 
 ## Custo
 

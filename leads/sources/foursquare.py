@@ -137,7 +137,8 @@ _HAIR_REMOVAL = "63be6904847c3692a84b9b4a"
 # OUTRO fica de fora de propósito — sem segmento definido, não há categoria a
 # escolher, e a busca cai no texto.
 _CATEGORIAS_POR_SEGMENTO: dict[str, tuple[str, ...]] = {
-    "SALAO": (_HAIR_SALON, _BARBERSHOP, _BELEZA_GENERICA),
+    "SALAO": (_HAIR_SALON, _BELEZA_GENERICA),
+    "BARBEARIA": (_BARBERSHOP,),
     "ESTETICA": (_SPA, _MASSAGE_CLINIC, _BELEZA_GENERICA),
     "NAIL": (_NAIL_SALON,),
     "LASH": (_BELEZA_GENERICA,),

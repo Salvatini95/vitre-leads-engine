@@ -34,6 +34,7 @@ class Segmento(models.TextChoices):
     """
 
     SALAO = "SALAO", "Salão de beleza"
+    BARBEARIA = "BARBEARIA", "Barbearia"
     ESTETICA = "ESTETICA", "Clínica de estética"
     NAIL = "NAIL", "Nail designer"
     LASH = "LASH", "Lash designer"
@@ -76,6 +77,8 @@ class StatusFunil(models.TextChoices):
     NOVO = "NOVO", "Novo (curadoria)"
     INICIAR = "INICIAR", "A iniciar"
     EM_ANDAMENTO = "EM_ANDAMENTO", "Em andamento"
+    SEM_RESPOSTA = "SEM_RESPOSTA", "Sem resposta"
+    NUMERO_INVALIDO = "NUMERO_INVALIDO", "Número inválido"
     REMARKETING = "REMARKETING", "Remarketing"
     CONVERTIDO = "CONVERTIDO", "Convertido"
     DESCARTADO = "DESCARTADO", "Descartado"
