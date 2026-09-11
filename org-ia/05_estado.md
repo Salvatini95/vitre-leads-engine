@@ -3,14 +3,14 @@
 > Documento de continuidade. Quem assumir a próxima sessão (Opus, Son Coder ou
 > Codex) lê este arquivo primeiro.
 
-**Última atualização:** 2026-09-10
-**Fase:** 1 — captação e qualificação (concluída) + fonte de contingência
+**Última atualização:** 2026-09-11
+**Fase:** Etapa 3 — captação por Cidade, incremento 1 implementado
 
 ---
 
 ## O que está pronto e verificado
 
-Bootstrap completo, 158 testes passando (`uv run pytest`).
+Bootstrap completo, 215 testes passando (`uv run pytest`).
 
 | Área | Arquivo | Estado |
 |---|---|---|
@@ -35,8 +35,53 @@ comprova a campanha de beleza e torna `Prospect.nicho` obrigatório.
 - **Nicho** é a classificação comercial estável do prospect.
 - **Segmento** permanece sendo o contexto técnico de busca e a seleção da copy
   manual de WhatsApp; não foi renomeado nem teve escolhas alteradas.
-- Localização por cidade, estado ou Brasil como estratégia de captação é uma
-  etapa futura independente e não está incluída nesta migration.
+- Na Etapa 1, localização por Cidade, Estado ou Brasil como estratégia de
+  captação foi registrada como etapa futura e não fez parte daquela migration.
+  Cidade passou a ser implementada apenas no incremento da Etapa 3 abaixo.
+
+### Etapa 3, incremento 1 — captação por Cidade com Nicho e termo explícitos
+
+O caso de uso compartilhado de captação por Cidade está em
+`leads/services/captacao_cidade.py`. Ele planeja e valida a operação antes de
+qualquer Varredura ou chamada externa, executa uma Varredura por quadrante e
+devolve os totais agregados. É o ponto de integração previsto para o futuro
+Admin “Nova Captação”.
+
+O modo legado permanece disponível e traduzido para o mesmo contrato:
+
+```bash
+uv run python manage.py captar --segmento SALAO
+uv run python manage.py captar --segmento NAIL --quadrante Q3
+uv run python manage.py captar --segmento SALAO --fonte foursquare --dry-run
+```
+
+Nesse modo, o Nicho implícito é `beleza` e o termo é o label atual do
+Segmento. O Nicho precisa existir e estar ativo.
+
+O modo novo recebe um Nicho existente e a atividade sem localização:
+
+```bash
+uv run python manage.py captar --nicho motoboys --termo "motoboy"
+```
+
+Sem `--segmento`, o modo novo usa `OUTRO`; um Segmento explícito é preservado.
+O serviço compõe uma única vez `motoboy em Maringá PR`, registra essa consulta
+em `Varredura.termo_busca` e atribui o Nicho da Varredura somente a Prospect
+novo. A recaptura não troca o Nicho de Prospect existente.
+
+Este incremento implementa somente **Cidade**, com grade já existente. O
+botão Admin “Nova Captação” e as modalidades Estado e Brasil permanecem
+futuros. Nenhuma regra de WhatsApp foi alterada; o contato continua manual.
+
+**Dívida operacional de franquia:** o saldo é reavaliado antes de cada
+quadrante, mas uma busca já iniciada pode consumir até três requisições mesmo
+quando o saldo restante é menor. Execuções concorrentes também ainda não
+reservam saldo. Essa proteção estrutural deve ser concluída antes de captações
+amplas por Estado ou Brasil.
+
+**Verificação deste incremento:** `manage.py check` sem problemas; **215
+testes passando**; `makemigrations --check` sem mudanças; nenhuma API real
+foi chamada.
 
 ### Localização factual do Prospect — Etapa 2
 
@@ -570,6 +615,18 @@ fazem:
 - `proximo_contato_em=None`
 
 Logo, não permanecem gerando follow-up.
+
+### Requisito futuro — filas por status (não implementado)
+
+As “pastas” do CRM deverão ser filas ou visualizações filtradas pelo
+`status_funil` do `Prospect`. Quando o status mudar, o lead deverá deixar a
+fila anterior e aparecer na fila correspondente ao novo status, sem mover nem
+duplicar fisicamente o registro: existirá um único `Prospect` como fonte
+oficial, com todo o histórico de `Interacao` preservado.
+
+Abrir o WhatsApp não alterará o status. Somente uma alteração efetiva de status
+mudará a fila. Os status terminais continuarão fora do funil e sem próximo
+contato. Este comportamento é futuro e não foi implementado neste incremento.
 
 ## Interações como mini-CRM
 

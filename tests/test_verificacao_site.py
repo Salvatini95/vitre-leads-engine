@@ -15,7 +15,14 @@ from __future__ import annotations
 import pytest
 
 from leads.filters.site_validator import EVIDENCIA_SEM_URL, SiteVerdict
-from leads.models import Prospect, ProspectVerificacao, Quadrante, Segmento, StatusFunil
+from leads.models import (
+    Nicho,
+    Prospect,
+    ProspectVerificacao,
+    Quadrante,
+    Segmento,
+    StatusFunil,
+)
 from leads.services import captacao
 from leads.sources.foursquare import FoursquareSource
 from leads.sources.google_places import GooglePlacesSource
@@ -66,8 +73,9 @@ def _candidato(origem, origem_id="x1", *, telefone="", website_url=""):
 def _rodar(monkeypatch, candidatos, vereditos, quadrante, fonte):
     monkeypatch.setattr(captacao, "_coletar", _fake_coletar(candidatos, vereditos))
     return captacao.executar_varredura(
+        nicho=Nicho.objects.get(codigo="beleza"),
         segmento=Segmento.SALAO,
-        segmento_rotulo=Segmento.SALAO.label,
+        consulta="Salão de beleza em Maringá PR",
         cidade="Maringá",
         estado="PR",
         quadrante=quadrante,

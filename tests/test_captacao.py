@@ -13,6 +13,7 @@ from leads.filters.site_validator import SiteVerdict
 from leads.models import (
     Descarte,
     MotivoDescarte,
+    Nicho,
     Prospect,
     Quadrante,
     Segmento,
@@ -21,7 +22,7 @@ from leads.models import (
     Varredura,
 )
 from leads.services import captacao
-from leads.sources.models import ProspectCandidate
+from leads.sources.models import BuscaParcialError, ProspectCandidate
 
 pytestmark = pytest.mark.django_db
 
@@ -75,9 +76,12 @@ def _rodar(monkeypatch, candidatos, vereditos, quadrante, requisicoes=1, **extra
     monkeypatch.setattr(
         captacao, "_coletar", _fake_coletar(candidatos, vereditos, requisicoes)
     )
+    nicho = extra.pop("nicho", Nicho.objects.get(codigo="beleza"))
+    consulta = extra.pop("consulta", "Salão de beleza em Maringá PR")
     return captacao.executar_varredura(
+        nicho=nicho,
         segmento=Segmento.SALAO,
-        segmento_rotulo=Segmento.SALAO.label,
+        consulta=consulta,
         cidade="Maringá",
         estado="PR",
         quadrante=quadrante,
@@ -150,6 +154,47 @@ def test_recaptura_nao_desfaz_curadoria(monkeypatch, quadrante):
     prospect.refresh_from_db()
     assert prospect.segmento == Segmento.NAIL
     assert prospect.status_funil == StatusFunil.EM_ANDAMENTO
+
+
+def test_varredura_e_prospect_novo_recebem_nicho_segmento_e_consulta(
+    monkeypatch, quadrante
+):
+    motoboys = Nicho.objects.create(codigo="motoboys", nome="Motoboys")
+
+    varredura = _rodar(
+        monkeypatch,
+        [_candidato("motoboy-1")],
+        [SEM_SITE],
+        quadrante,
+        nicho=motoboys,
+        consulta="motoboy em Maringá PR",
+    )
+
+    prospect = Prospect.objects.get(origem_id="motoboy-1")
+    assert varredura.nicho == motoboys
+    assert varredura.segmento == Segmento.SALAO
+    assert varredura.termo_busca == "motoboy em Maringá PR"
+    assert prospect.nicho == motoboys
+
+
+def test_recaptura_preserva_nicho_mesmo_sem_revisao_manual(monkeypatch, quadrante):
+    _rodar(monkeypatch, [_candidato("p1")], [SEM_SITE], quadrante)
+    prospect = Prospect.objects.get(origem_id="p1")
+    nicho_original = prospect.nicho
+    motoboys = Nicho.objects.create(codigo="motoboys", nome="Motoboys")
+
+    _rodar(
+        monkeypatch,
+        [_candidato("p1")],
+        [SEM_SITE],
+        quadrante,
+        nicho=motoboys,
+        consulta="motoboy em Maringá PR",
+    )
+
+    prospect.refresh_from_db()
+    assert prospect.revisado_manualmente is False
+    assert prospect.nicho == nicho_original
 
 
 def test_banido_nao_volta_ao_funil(monkeypatch, quadrante):
@@ -244,26 +289,78 @@ def test_fonte_desconhecida_falha_cedo(monkeypatch, quadrante):
 
 def test_erro_de_busca_grava_o_custo_ja_consumido(monkeypatch, quadrante):
     """Requisição gasta tem de contar na franquia mesmo com varredura em erro."""
-    from leads.sources.models import BuscaParcialError
 
     async def _coletar_falho(texto_query, celula, fonte=None, segmento=None):
         raise BuscaParcialError(total_requisicoes=2, candidatos=[])
 
     monkeypatch.setattr(captacao, "_coletar", _coletar_falho)
 
-    with pytest.raises(BuscaParcialError):
+    with pytest.raises(captacao.VarreduraParcialError) as info:
         captacao.executar_varredura(
+            nicho=Nicho.objects.get(codigo="beleza"),
             segmento=Segmento.SALAO,
-            segmento_rotulo=Segmento.SALAO.label,
+            consulta="Salão de beleza em Maringá PR",
             cidade="Maringá",
             estado="PR",
             quadrante=quadrante,
         )
 
     varredura = Varredura.objects.get()
+    assert info.value.varredura == varredura
+    assert isinstance(info.value.causa, BuscaParcialError)
+    assert info.value.__cause__ is info.value.causa
     assert varredura.status == StatusVarredura.ERRO
     assert varredura.total_requisicoes == 2
     assert captacao.consumo_do_mes() == 2
+
+
+@pytest.mark.parametrize("busca_parcial", [False, True])
+def test_falha_ao_persistir_erro_preserva_as_duas_causas(
+    monkeypatch,
+    quadrante,
+    busca_parcial,
+):
+    causa_operacional = (
+        BuscaParcialError(total_requisicoes=2, candidatos=[])
+        if busca_parcial
+        else RuntimeError("falha operacional sigilosa")
+    )
+    causa_finalizacao = RuntimeError("falha ao salvar estado")
+
+    async def _coletar_falho(*_args):
+        raise causa_operacional
+
+    save_original = Varredura.save
+
+    def save_com_falha_no_erro(self, *args, **kwargs):
+        if self.status == StatusVarredura.ERRO:
+            raise causa_finalizacao
+        return save_original(self, *args, **kwargs)
+
+    monkeypatch.setattr(captacao, "_coletar", _coletar_falho)
+    monkeypatch.setattr(Varredura, "save", save_com_falha_no_erro)
+
+    with pytest.raises(captacao.FalhaFinalizacaoVarreduraError) as info:
+        captacao.executar_varredura(
+            nicho=Nicho.objects.get(codigo="beleza"),
+            segmento=Segmento.SALAO,
+            consulta="Salão de beleza em Maringá PR",
+            cidade="Maringá",
+            estado="PR",
+            quadrante=quadrante,
+        )
+
+    erro = info.value
+    persistida = Varredura.objects.get()
+    assert erro.varredura.pk == persistida.pk
+    assert erro.causa_operacional is causa_operacional
+    assert erro.causa_finalizacao is causa_finalizacao
+    assert erro.busca_parcial is busca_parcial
+    assert erro.estado_erro_persistido is False
+    assert erro.__cause__ is causa_finalizacao
+    assert causa_finalizacao.__context__ is causa_operacional
+    assert persistida.status == StatusVarredura.RODANDO
+    assert "sigilosa" not in str(erro)
 
 
 def test_query_montada_com_segmento_e_cidade(monkeypatch, quadrante):

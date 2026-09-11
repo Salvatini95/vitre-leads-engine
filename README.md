@@ -16,7 +16,8 @@ sempre seus.
    Maringá" satura nesse teto e mostra só os mais bem ranqueados — que são
    justamente os que já têm site. Buscando quadrante a quadrante, cada célula
    tem seu próprio teto e a cidade é varrida inteira.
-2. **Captação** — uma varredura por quadrante, com o termo do segmento.
+2. **Captação** — uma varredura por quadrante, com Nicho comercial, Segmento
+   técnico e termo explícito da atividade.
 3. **Filtro de qualificação** — para cada estabelecimento, decide se ele tem
    site próprio de verdade. O `websiteUri` do Google mente: vem preenchido com
    Instagram, Linktree, página de agendamento, domínio morto e página
@@ -49,52 +50,78 @@ tem trava própria de custo.
 # 1. Uma vez por cidade: gera a grade de busca
 uv run python manage.py gerar_grade --cidade Maringá --estado PR --lado 4
 
-# 2. Ver o custo antes de gastar (não chama a API)
+# 2. Modo legado: ver o custo antes de gastar (não chama a API)
 uv run python manage.py captar --segmento SALAO --dry-run
 
-# 3. Captar
+# 3. Modo legado: captar com Nicho beleza e termo vindo do Segmento
 uv run python manage.py captar --segmento SALAO
 uv run python manage.py captar --segmento BARBEARIA
 uv run python manage.py captar --segmento ESTETICA
 uv run python manage.py captar --segmento NAIL
 uv run python manage.py captar --segmento LASH
 
-# 4. Trabalhar os leads
+# 4. Modo novo: captar com Nicho e atividade explícitos
+uv run python manage.py captar --nicho motoboys --termo "motoboy"
+
+# Segmento é opcional no modo novo; quando omitido, usa OUTRO
+uv run python manage.py captar --nicho motoboys --termo "motoboy" --segmento OUTRO
+
+# 5. Trabalhar os leads
 uv run python manage.py runserver     # → http://localhost:8000/admin
 ```
 
 Segmentos: `SALAO`, `BARBEARIA`, `ESTETICA`, `NAIL`, `LASH`, `SOBRANCELHA`, `OUTRO`.
 
+No modo novo, `--nicho` é o código exato de um Nicho que já deve estar
+cadastrado e ativo. `--termo` contém apenas a atividade (por exemplo,
+`motoboy`), sem cidade ou estado; o serviço acrescenta a localização uma única
+vez e registra a consulta completa na Varredura. `--nicho` e `--termo` devem
+ser usados juntos. `--dry-run` valida Nicho, fonte e grade e calcula a
+franquia, mas não cria Varredura nem chama API.
+
+Este incremento atende somente captação por **Cidade**, usando a grade já
+gerada. O botão Admin “Nova Captação” e as modalidades Estado e Brasil
+continuam futuros.
+
 ## Custo
 
-A unidade de cobrança é a **requisição** (1 requisição = 1 página = até 20
-resultados). Uma grade 4x4 custa no máximo 48 requisições por segmento — a
-cidade inteira, para um segmento. Os cinco segmentos cabem em ~240
-requisições, contra a franquia padrão de 1000/mês configurada no `.env`.
+A unidade de cobrança controlada pelo sistema é a **requisição**: uma página
+da fonte escolhida. No Google, cada página traz até 20 resultados e uma busca
+usa no máximo 3 páginas; `PLACES_FRANQUIA_MENSAL` configura sua franquia. Na
+Foursquare, cada página traz até 50 resultados, também com até 3 páginas por
+busca, e `FOURSQUARE_FRANQUIA_MENSAL` mantém uma franquia independente. A
+estimativa exibida pelo comando usa o máximo declarado pela fonte escolhida.
 
-Três travas contra fatura surpresa:
+Controles atuais de consumo:
 
-- `PLACES_FRANQUIA_MENSAL` no `.env` — teto absoluto. Atingido, a captação
-  para.
+- O saldo da fonte é verificado novamente antes de iniciar cada quadrante.
 - O contador respeita o fuso do reset da Google (Pacífico), não o nosso.
 - Requisição consumida numa varredura que falhou **conta** na franquia, para
-  a trava nunca subestimar o gasto real.
+  que a trava não subestime o gasto real.
 
 `--dry-run` mostra o pior caso antes de qualquer chamada.
+
+Limitação preexistente: se o saldo restante for menor que o máximo de uma
+busca, o quadrante já iniciado pode consumir mais de uma requisição. Execuções
+concorrentes também exigem uma proteção específica. Essa dívida operacional
+deve ser resolvida antes de captações amplas por Estado ou Brasil.
 
 ## Segmento vs CNAE
 
 O CNAE 9602-5/01 junta salão de beleza e barbearia, e o `primaryType` do
-Google é grosseiro demais. Aqui o segmento vem do **termo de busca** que
-capturou o prospect — você roda uma varredura por termo e não precisa de
-heurística sobre o nome fantasia. Correções manuais no Admin ligam
-`revisado_manualmente` e nunca são desfeitas por uma nova varredura.
+Google é grosseiro demais. No modo legado, o label do Segmento fornece o termo
+da atividade. No modo novo, o termo é explícito e o Segmento permanece como
+contexto técnico, usando `OUTRO` por padrão. Assim não é preciso criar um
+Segmento para cada Nicho nem inferir a atividade pelo nome fantasia. Correções
+manuais no Admin ligam `revisado_manualmente` e nunca são desfeitas por uma
+nova varredura.
 
 ## Nicho, segmento e localização
 
 `Nicho` é a classificação comercial estável do prospect. O nicho inicial é
-`beleza` / **Beleza** e novos nichos poderão ser cadastrados no Admin quando
-forem definidos comercialmente.
+`beleza` / **Beleza**; novos nichos são cadastrados no Admin e precisam estar
+ativos antes da captação. O modo legado com `--segmento` continua associando
+implicitamente o Nicho `beleza`.
 
 `Segmento` continua sendo o contexto técnico já existente: ele participa da
 busca atual e escolhe a copy manual de WhatsApp. Não é substituído por nicho;

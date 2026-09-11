@@ -63,6 +63,35 @@ class FranquiaEsgotadaError(Exception):
     """Teto mensal de requisições atingido — captação bloqueada."""
 
 
+class VarreduraParcialError(Exception):
+    """Falha parcial já persistida, com referência explícita à Varredura."""
+
+    def __init__(self, *, varredura: Varredura, causa: BuscaParcialError) -> None:
+        self.varredura = varredura
+        self.causa = causa
+        super().__init__(str(causa))
+
+
+class FalhaFinalizacaoVarreduraError(Exception):
+    """Falha ao persistir ERRO, preservando a operação e a finalização."""
+
+    def __init__(
+        self,
+        *,
+        varredura: Varredura,
+        causa_operacional: Exception,
+        causa_finalizacao: Exception,
+    ) -> None:
+        self.varredura = varredura
+        self.causa_operacional = causa_operacional
+        self.causa_finalizacao = causa_finalizacao
+        self.busca_parcial = isinstance(causa_operacional, BuscaParcialError)
+        self.estado_erro_persistido = False
+        super().__init__(
+            "Não foi possível persistir o encerramento da Varredura após uma falha."
+        )
+
+
 def _inicio_do_mes_da_franquia() -> datetime:
     """Início do mês corrente no fuso do Pacífico, em UTC."""
     agora = timezone.now().astimezone(_FUSO_FRANQUIA)
@@ -91,10 +120,6 @@ def consumo_do_mes(fonte: str = FONTE_PADRAO) -> int:
 def saldo_da_franquia(fonte: str = FONTE_PADRAO) -> int:
     """Quantas requisições ainda cabem no mês para esta fonte."""
     return max(0, teto_da_franquia(fonte) - consumo_do_mes(fonte))
-
-
-def _montar_query(segmento_rotulo: str, cidade: str, estado: str) -> str:
-    return f"{segmento_rotulo} em {cidade} {estado}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,8 +151,9 @@ async def _coletar(
     negócio que não existe mais. O corte é anterior ao dedup e ao banimento
     de propósito — os três motivos de sumiço ficam contados em separado.
 
-    Em falha parcial da busca, o que já foi coletado é validado e devolvido
-    mesmo assim, e o erro é propagado depois de o chamador gravar o custo.
+    Em falha parcial da busca, a exceção preserva os candidatos coletados pela
+    fonte e o custo consumido. Esta função não valida nem persiste esses
+    candidatos parciais; o chamador registra somente o custo e o erro.
 
     A validação de site é idêntica para qualquer fonte: o critério comercial
     ("não tem site") não muda porque o endereço veio de outra API.
@@ -402,8 +428,9 @@ def _localizacao_atual_veio_do_candidato(
 
 def executar_varredura(
     *,
+    nicho: Nicho,
     segmento: str,
-    segmento_rotulo: str,
+    consulta: str,
     cidade: str,
     estado: str,
     quadrante: Quadrante | None = None,
@@ -411,8 +438,9 @@ def executar_varredura(
 ) -> Varredura:
     """Roda uma varredura completa e devolve o registro com os contadores.
 
-    `fonte` é o nome registrado em `leads.sources.FONTES`. O default mantém o
-    Google Places como fonte primária.
+    `nicho`, `segmento` e `consulta` já chegam resolvidos pelo caso de uso que
+    iniciou a captação. `fonte` é o nome registrado em `leads.sources.FONTES`.
+    O default mantém o Google Places como fonte primária.
 
     Raises:
         FranquiaEsgotadaError: se o teto mensal DESTA fonte já foi atingido.
@@ -424,13 +452,10 @@ def executar_varredura(
             "Captação bloqueada até o reset."
         )
 
-    texto_query = _montar_query(segmento_rotulo, cidade, estado)
-    nicho_beleza = Nicho.objects.get(codigo="beleza")
-
     varredura = Varredura.objects.create(
-        termo_busca=texto_query,
+        termo_busca=consulta,
         segmento=segmento,
-        nicho=nicho_beleza,
+        nicho=nicho,
         fonte=classe_da_fonte(fonte).ORIGEM,
         cidade=cidade,
         estado=estado,
@@ -438,44 +463,87 @@ def executar_varredura(
         status=StatusVarredura.RODANDO,
     )
 
-    celula = (
-        CelulaGrade(
-            rotulo=quadrante.rotulo,
-            sul=quadrante.sul,
-            oeste=quadrante.oeste,
-            norte=quadrante.norte,
-            leste=quadrante.leste,
-        )
-        if quadrante
-        else None
-    )
-
     try:
-        coleta = asyncio.run(_coletar(texto_query, celula, fonte, segmento))
-    except BuscaParcialError as exc:
-        # Requisição já consumida conta na franquia mesmo com a busca em erro.
-        varredura.total_requisicoes = exc.total_requisicoes
-        varredura.status = StatusVarredura.ERRO
-        varredura.erro = str(exc)
+        celula = (
+            CelulaGrade(
+                rotulo=quadrante.rotulo,
+                sul=quadrante.sul,
+                oeste=quadrante.oeste,
+                norte=quadrante.norte,
+                leste=quadrante.leste,
+            )
+            if quadrante
+            else None
+        )
+
+        coleta = asyncio.run(_coletar(consulta, celula, fonte, segmento))
+        sem_site, novos = _persistir(
+            varredura,
+            coleta.candidatos,
+            coleta.vereditos,
+            site_confiavel=classe_da_fonte(fonte).SITE_CONFIAVEL,
+        )
+
+        varredura.total_requisicoes = coleta.requisicoes
+        varredura.total_encontrados = len(coleta.candidatos)
+        varredura.total_sem_site = sem_site
+        varredura.total_novos = novos
+        varredura.total_fechados = coleta.fechados
+        varredura.status = StatusVarredura.CONCLUIDA
         varredura.concluido_em = timezone.now()
         varredura.save()
+    except BuscaParcialError as exc:
+        # Requisição já consumida conta na franquia mesmo com a busca em erro.
+        _finalizar_varredura_ou_falhar(
+            varredura,
+            exc,
+            total_requisicoes=exc.total_requisicoes,
+        )
         logger.warning("Varredura %s terminou em erro parcial", varredura.id)
+        raise VarreduraParcialError(varredura=varredura, causa=exc) from exc
+    except Exception as exc:
+        _finalizar_varredura_ou_falhar(varredura, exc)
+        logger.exception("Varredura %s terminou em erro inesperado", varredura.id)
         raise
 
-    sem_site, novos = _persistir(
-        varredura,
-        coleta.candidatos,
-        coleta.vereditos,
-        site_confiavel=classe_da_fonte(fonte).SITE_CONFIAVEL,
-    )
+    return varredura
 
-    varredura.total_requisicoes = coleta.requisicoes
-    varredura.total_encontrados = len(coleta.candidatos)
-    varredura.total_sem_site = sem_site
-    varredura.total_novos = novos
-    varredura.total_fechados = coleta.fechados
-    varredura.status = StatusVarredura.CONCLUIDA
+
+def _finalizar_varredura_com_erro(
+    varredura: Varredura,
+    exc: BaseException,
+    *,
+    total_requisicoes: int | None = None,
+) -> None:
+    """Tenta persistir o encerramento da Varredura como ERRO."""
+    if total_requisicoes is not None:
+        varredura.total_requisicoes = total_requisicoes
+    varredura.status = StatusVarredura.ERRO
+    varredura.erro = str(exc)
     varredura.concluido_em = timezone.now()
     varredura.save()
 
-    return varredura
+
+def _finalizar_varredura_ou_falhar(
+    varredura: Varredura,
+    causa_operacional: Exception,
+    *,
+    total_requisicoes: int | None = None,
+) -> None:
+    """Preserva separadamente a falha operacional e a de persistência."""
+    try:
+        _finalizar_varredura_com_erro(
+            varredura,
+            causa_operacional,
+            total_requisicoes=total_requisicoes,
+        )
+    except Exception as causa_finalizacao:
+        logger.exception(
+            "Não foi possível persistir o status ERRO da Varredura %s",
+            varredura.id,
+        )
+        raise FalhaFinalizacaoVarreduraError(
+            varredura=varredura,
+            causa_operacional=causa_operacional,
+            causa_finalizacao=causa_finalizacao,
+        ) from causa_finalizacao
