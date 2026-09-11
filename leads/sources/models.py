@@ -25,7 +25,16 @@ class ProspectCandidate:
     origem: str
     origem_id: str
     nome: str
-    endereco: str = ""
+    # Localização factual declarada pela fonte. `None` significa ausência de
+    # dado na resposta; a persistência não pode trocá-la pelo alvo da busca.
+    endereco: str | None = None
+    bairro: str | None = None
+    cidade: str | None = None
+    estado: str | None = None
+    pais: str | None = None
+    cep: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     telefone: str = ""
     website_url: str = ""
     rating: float | None = None

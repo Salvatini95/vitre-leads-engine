@@ -21,6 +21,7 @@ from leads.services.grade import CelulaGrade
 from leads.sources.foursquare import (
     _CATEGORIAS_POR_SEGMENTO,
     _FIELDS_BASE,
+    _FIELDS_LEGADOS,
     _FIELDS_PRO,
     FoursquareSource,
 )
@@ -168,7 +169,14 @@ def test_todo_segmento_operacional_tem_categoria():
 def test_pede_os_campos_do_dominio():
     """Campo não pedido não vem na resposta — diferente do Google, aqui o
     field mask não muda preço, muda o que existe no JSON."""
-    assert {"name", "location", "website", "categories"} <= set(_FIELDS_BASE)
+    assert {
+        "name",
+        "location",
+        "latitude",
+        "longitude",
+        "website",
+        "categories",
+    } <= set(_FIELDS_BASE)
 
 
 @pytest.mark.asyncio
@@ -240,6 +248,109 @@ async def test_mapeia_campos_para_o_contrato_neutro():
     assert candidato.website_url == ""
     assert candidato.categoria == "Health and Beauty Service"
     assert candidato.ativo is True
+
+
+@pytest.mark.asyncio
+async def test_mapeia_localizacao_estruturada_e_coordenadas_atuais():
+    corpo = _pagina(1)
+    corpo["results"][0].update(
+        {
+            "location": {
+                "address": "Rua das Flores, 123",
+                "locality": "Curitiba",
+                "region": "PR",
+                "country": "br",
+                "postcode": "80000-000",
+            },
+            "latitude": -25.4284,
+            "longitude": -49.2733,
+        }
+    )
+
+    with respx.mock:
+        respx.get(_endpoint()).mock(return_value=httpx.Response(200, json=corpo))
+        async with FoursquareSource("k") as fonte:
+            resultado = await fonte.buscar("salão", CELULA, "SALAO")
+
+    candidato = resultado.candidatos[0]
+    assert candidato.endereco == "Rua das Flores, 123"
+    assert candidato.bairro is None
+    assert candidato.cidade == "Curitiba"
+    assert candidato.estado == "PR"
+    assert candidato.pais == "BR"
+    assert candidato.cep == "80000-000"
+    assert candidato.latitude == -25.4284
+    assert candidato.longitude == -49.2733
+
+
+@pytest.mark.asyncio
+async def test_aceita_fallback_legado_sem_inferir_cidade_ou_estado():
+    corpo = _pagina(1)
+    corpo["results"][0]["location"] = {
+        "formatted_address": "Rua X, Maringá, PR"
+    }
+    corpo["results"][0]["geocodes"] = {
+        "main": {"latitude": -23.4205, "longitude": -51.9333}
+    }
+
+    with respx.mock:
+        rota = respx.get(_endpoint(BASE_LEGADA)).mock(
+            return_value=httpx.Response(200, json=corpo)
+        )
+        async with FoursquareSource("k", api_base=BASE_LEGADA) as fonte:
+            resultado = await fonte.buscar("salão", CELULA, "SALAO")
+
+    campos = set(rota.calls[0].request.url.params["fields"].split(","))
+    candidato = resultado.candidatos[0]
+    assert set(_FIELDS_LEGADOS) <= campos
+    assert "latitude" not in campos
+    assert "longitude" not in campos
+    assert candidato.endereco == "Rua X, Maringá, PR"
+    assert candidato.cidade is None
+    assert candidato.estado is None
+    assert candidato.latitude == -23.4205
+    assert candidato.longitude == -51.9333
+
+
+def test_localizacao_parcial_ou_ausente_permanece_desconhecida():
+    parcial = {
+        "fsq_place_id": "parcial",
+        "name": "Salão Parcial",
+        "location": {"locality": "Maringá"},
+    }
+    ausente = {"fsq_place_id": "ausente", "name": "Salão Ausente"}
+
+    candidato_parcial, candidato_ausente = FoursquareSource._parsear(
+        [parcial, ausente]
+    )
+
+    assert candidato_parcial.cidade == "Maringá"
+    assert candidato_parcial.endereco is None
+    assert candidato_parcial.estado is None
+    assert candidato_parcial.latitude is None
+    assert candidato_ausente.endereco is None
+    assert candidato_ausente.cidade is None
+    assert candidato_ausente.longitude is None
+
+
+@pytest.mark.parametrize(
+    "latitude,longitude",
+    [(-23.42, None), (None, -51.93), (91.0, -51.93), (-23.42, float("inf"))],
+)
+def test_coordenadas_parciais_ou_invalidas_nao_formam_localizacao(
+    latitude, longitude
+):
+    lugar = {
+        "fsq_place_id": "coordenada",
+        "name": "Salão Coordenada",
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+
+    candidato = FoursquareSource._parsear([lugar])[0]
+
+    assert candidato.latitude is None
+    assert candidato.longitude is None
 
 
 @pytest.mark.asyncio

@@ -51,6 +51,19 @@ class Origem(models.TextChoices):
     MANUAL = "MANUAL", "Cadastro manual"
 
 
+class OrigemLocalizacao(models.TextChoices):
+    """Proveniência do conjunto de campos geográficos do prospect.
+
+    Não confundir com ``Origem`` (a fonte que criou o lead) nem com
+    ``revisado_manualmente`` (trava comercial geral). Este campo responde
+    apenas quem informou a localização factual atualmente guardada.
+    """
+
+    DESCONHECIDA = "DESCONHECIDA", "Desconhecida"
+    FONTE = "FONTE", "Fonte"
+    MANUAL = "MANUAL", "Manual"
+
+
 # Nome curto da fonte para a tag da fila de verificação. O label completo
 # ("Foursquare Places") é verboso demais para uma etiqueta de lista.
 ROTULO_CURTO_ORIGEM = {
@@ -89,6 +102,27 @@ class StatusVarredura(models.TextChoices):
     RODANDO = "RODANDO", "Rodando"
     CONCLUIDA = "CONCLUIDA", "Concluída"
     ERRO = "ERRO", "Erro"
+
+
+class Nicho(models.Model):
+    """Classificação comercial estável de um prospect.
+
+    Não confundir com ``Segmento``: segmento continua descrevendo o contexto
+    técnico da busca e a copy manual de WhatsApp. Nicho agrupa a oportunidade
+    comercial, independentemente da fonte ou da copy usada no contato.
+    """
+
+    codigo = models.SlugField(max_length=50, unique=True)
+    nome = models.CharField(max_length=100)
+    ativo = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "nicho"
+        verbose_name_plural = "nichos"
+        ordering = ["nome"]
+
+    def __str__(self) -> str:
+        return self.nome
 
 
 class Quadrante(models.Model):
@@ -139,6 +173,13 @@ class Varredura(models.Model):
         help_text='Texto literal enviado à API, ex: "salão de beleza em Maringá PR"',
     )
     segmento = models.CharField(max_length=20, choices=Segmento.choices)
+    nicho = models.ForeignKey(
+        Nicho,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="varreduras",
+    )
     # Cada fonte tem franquia própria, então o consumo é contado POR fonte —
     # sem este campo, uma varredura na Foursquare descontaria da franquia do
     # Google. Default = GOOGLE_PLACES: toda varredura anterior a este campo é
@@ -222,14 +263,33 @@ class Prospect(models.Model):
         choices=Segmento.choices,
         default=Segmento.OUTRO,
     )
+    nicho = models.ForeignKey(
+        Nicho,
+        on_delete=models.PROTECT,
+        related_name="prospects",
+    )
     # Termo literal que achou o prospect na PRIMEIRA captura. Não é
     # sobrescrito em recaptura — responde "o que trouxe este lead até aqui".
     termo_busca = models.CharField(max_length=200, blank=True, default="")
 
-    endereco = models.TextField(blank=True, default="")
-    bairro = models.CharField(max_length=120, blank=True, default="")
-    cidade = models.CharField(max_length=100, blank=True, default="")
-    estado = models.CharField(max_length=2, blank=True, default="")
+    # Localização FACTUAL do estabelecimento. O alvo da busca fica em
+    # `Varredura.cidade` / `Varredura.estado` e nunca serve de fallback aqui.
+    # NULL significa que a fonte não declarou o dado e ninguém o informou à
+    # mão; não é substituído por uma inferência do termo ou do quadrante.
+    endereco = models.TextField(null=True, blank=True)
+    bairro = models.CharField(max_length=120, null=True, blank=True)
+    cidade = models.CharField(max_length=100, null=True, blank=True)
+    estado = models.CharField(max_length=100, null=True, blank=True)
+    pais = models.CharField(max_length=2, null=True, blank=True)
+    cep = models.CharField(max_length=20, null=True, blank=True)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    origem_localizacao = models.CharField(
+        max_length=20,
+        choices=OrigemLocalizacao.choices,
+        default=OrigemLocalizacao.DESCONHECIDA,
+        help_text="Quem declarou a localização factual atualmente armazenada.",
+    )
 
     # Normalizado para `+55DDNNNNNNNNN` na gravação (leads.utils.telefone).
     # Número que não casou com nenhum formato conhecido fica como veio — some

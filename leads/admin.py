@@ -23,6 +23,8 @@ from leads.models import (
     Canal,
     Descarte,
     Interacao,
+    Nicho,
+    OrigemLocalizacao,
     Prospect,
     ProspectVerificacao,
     Quadrante,
@@ -51,8 +53,43 @@ class DescarteInline(admin.TabularInline):
     readonly_fields = ("criado_em",)
 
 
+_CAMPOS_LOCALIZACAO_FACTUAL = frozenset(
+    {
+        "endereco",
+        "bairro",
+        "cidade",
+        "estado",
+        "pais",
+        "cep",
+        "latitude",
+        "longitude",
+    }
+)
+
+
+class OrigemLocalizacaoAdminMixin:
+    """Marca como manual somente uma edição geográfica feita no Admin."""
+
+    def save_model(self, request, obj, form, change):
+        if _CAMPOS_LOCALIZACAO_FACTUAL.intersection(form.changed_data):
+            obj.origem_localizacao = OrigemLocalizacao.MANUAL
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(Nicho)
+class NichoAdmin(admin.ModelAdmin):
+    list_display = ("nome", "codigo", "ativo")
+    list_filter = ("ativo",)
+    search_fields = ("nome", "codigo")
+
+    def get_readonly_fields(self, request, obj=None):
+        # O código identifica o nicho em dados e integrações; não muda depois
+        # de criado para continuar estável.
+        return ("codigo",) if obj else ()
+
+
 @admin.register(Prospect)
-class ProspectAdmin(admin.ModelAdmin):
+class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
     list_display = (
         "nome",
         "segmento",
@@ -67,6 +104,7 @@ class ProspectAdmin(admin.ModelAdmin):
     list_filter = (
         "status_funil",
         "segmento",
+        "nicho",
         "tem_site_real",
         "revisado_manualmente",
         "cidade",
@@ -121,7 +159,7 @@ class ProspectAdmin(admin.ModelAdmin):
 
 
 @admin.register(ProspectVerificacao)
-class ProspectVerificacaoAdmin(admin.ModelAdmin):
+class ProspectVerificacaoAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
     """Fila de verificação manual de site.
 
     Tela separada de propósito: o `ProspectAdmin` continua servindo o fluxo

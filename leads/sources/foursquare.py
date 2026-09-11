@@ -56,6 +56,7 @@ A chave nunca é logada — o código registra apenas presença.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -102,6 +103,8 @@ _FIELDS_BASE = (
     "fsq_place_id",
     "name",
     "location",
+    "latitude",
+    "longitude",
     "tel",
     "website",
     "categories",
@@ -114,6 +117,13 @@ _FIELDS_BASE = (
 # Por isso ficam desligados por padrão: sem eles a captação roda de graça,
 # com `rating` e `total_avaliacoes` vazios.
 _FIELDS_PRO = ("rating", "stats")
+
+# A v3 legada devolve coordenadas em `geocodes.main`; a API atual as devolve
+# no topo. Pedir `geocodes` à API atual seria arriscar 400 por campo inválido,
+# por isso a seleção de fields depende da base configurada.
+_FIELDS_LEGADOS = tuple(
+    campo for campo in _FIELDS_BASE if campo not in {"latitude", "longitude"}
+) + ("geocodes",)
 
 # Escala da Foursquare (0–10) para a do contrato (0–5).
 _DIVISOR_RATING = 2.0
@@ -224,11 +234,12 @@ class FoursquareSource(FonteDeProspects):
             raise ValueError(
                 "FOURSQUARE_API_KEY ausente — preencha o .env antes de captar"
             )
-        self._api_key = api_key
-        self._campos = _FIELDS_BASE + (_FIELDS_PRO if campos_pro else ())
         self._api_base = api_base.rstrip("/")
         self._endpoint = f"{self._api_base}{_CAMINHO}"
         self._legado_v3 = self._api_base.endswith("/v3")
+        campos_base = _FIELDS_LEGADOS if self._legado_v3 else _FIELDS_BASE
+        self._api_key = api_key
+        self._campos = campos_base + (_FIELDS_PRO if campos_pro else ())
         self._owns_client = http_client is None
         self._client = http_client or httpx.AsyncClient(timeout=timeout)
         logger.info(
@@ -384,7 +395,10 @@ class FoursquareSource(FonteDeProspects):
             if not nome:
                 continue
 
-            localizacao = lugar.get("location") or {}
+            localizacao_bruta = lugar.get("location")
+            localizacao = (
+                localizacao_bruta if isinstance(localizacao_bruta, dict) else {}
+            )
             categorias = lugar.get("categories") or []
             estatisticas = lugar.get("stats") or {}
 
@@ -394,13 +408,25 @@ class FoursquareSource(FonteDeProspects):
             # não aparece no objeto. Ausência aqui significa "a Foursquare não
             # afirmou que fechou", nunca "está aberto".
             data_fechamento = (lugar.get("date_closed") or "").strip()
+            latitude, longitude = _coordenadas_de(lugar)
+            endereco = _texto(localizacao.get("address"))
+            if endereco is None:
+                # Compatibilidade com a resposta/fixture da v3. É endereço
+                # exibível, mas não será analisado para deduzir outros campos.
+                endereco = _texto(localizacao.get("formatted_address"))
 
             candidatos.append(
                 ProspectCandidate(
                     origem=FoursquareSource.ORIGEM,
                     origem_id=place_id,
                     nome=nome,
-                    endereco=localizacao.get("formatted_address", "") or "",
+                    endereco=endereco,
+                    cidade=_texto(localizacao.get("locality")),
+                    estado=_texto(localizacao.get("region")),
+                    pais=_pais(localizacao.get("country")),
+                    cep=_texto(localizacao.get("postcode")),
+                    latitude=latitude,
+                    longitude=longitude,
                     telefone=lugar.get("tel", "") or "",
                     website_url=lugar.get("website", "") or "",
                     # 0–10 na fonte, 0–5 no contrato — ver observação 1.
@@ -416,3 +442,49 @@ class FoursquareSource(FonteDeProspects):
                 )
             )
         return candidatos
+
+
+def _texto(valor: object) -> str | None:
+    """Normaliza somente texto declarado pela fonte; não infere geografia."""
+    if not isinstance(valor, str):
+        return None
+    texto = valor.strip()
+    return texto or None
+
+
+def _pais(valor: object) -> str | None:
+    """O modelo guarda código de país de duas letras, sem truncar valores."""
+    pais = _texto(valor)
+    return pais.upper() if pais is not None and len(pais) == 2 else None
+
+
+def _coordenadas_de(lugar: dict[str, Any]) -> tuple[float | None, float | None]:
+    """Devolve somente um par geográfico válido, atual ou legado.
+
+    Não combina latitude de um formato com longitude de outro: um par parcial
+    não localiza um estabelecimento e deve permanecer desconhecido.
+    """
+    latitude = lugar.get("latitude")
+    longitude = lugar.get("longitude")
+
+    if latitude is None or longitude is None:
+        geocodes = lugar.get("geocodes")
+        principal = geocodes.get("main") if isinstance(geocodes, dict) else None
+        if isinstance(principal, dict):
+            latitude = principal.get("latitude")
+            longitude = principal.get("longitude")
+
+    if not _coordenada_valida(latitude, -90, 90):
+        return None, None
+    if not _coordenada_valida(longitude, -180, 180):
+        return None, None
+    return float(latitude), float(longitude)
+
+
+def _coordenada_valida(valor: object, minimo: float, maximo: float) -> bool:
+    return (
+        isinstance(valor, (int, float))
+        and not isinstance(valor, bool)
+        and math.isfinite(valor)
+        and minimo <= valor <= maximo
+    )

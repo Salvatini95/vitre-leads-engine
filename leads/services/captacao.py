@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -34,7 +35,16 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from leads.filters.site_validator import SiteValidator, SiteVerdict
-from leads.models import Descarte, Prospect, Quadrante, StatusFunil, StatusVarredura, Varredura
+from leads.models import (
+    Descarte,
+    Nicho,
+    OrigemLocalizacao,
+    Prospect,
+    Quadrante,
+    StatusFunil,
+    StatusVarredura,
+    Varredura,
+)
 from leads.services.grade import CelulaGrade
 from leads.sources import FONTE_PADRAO, classe_da_fonte, criar_fonte
 from leads.sources.models import BuscaParcialError, ProspectCandidate
@@ -221,15 +231,16 @@ def _persistir(
         ).first()
 
         if existente is None:
+            origem_localizacao = _origem_da_localizacao(candidato)
             Prospect.objects.create(
                 origem=candidato.origem,
                 origem_id=candidato.origem_id,
                 nome=candidato.nome,
                 segmento=varredura.segmento,
+                nicho=varredura.nicho,
                 termo_busca=varredura.termo_busca,
-                endereco=candidato.endereco,
-                cidade=varredura.cidade,
-                estado=varredura.estado,
+                **_valores_de_localizacao(candidato),
+                origem_localizacao=origem_localizacao,
                 telefone=telefone.e164 or candidato.telefone,
                 telefone_tipo=telefone.tipo,
                 website_url=candidato.website_url,
@@ -247,7 +258,7 @@ def _persistir(
         # Recaptura: atualiza o que é fato do mundo (telefone, site, nota) e
         # nunca toca no que foi decidido por você.
         existente.nome = candidato.nome
-        existente.endereco = candidato.endereco
+        _atualizar_localizacao(existente, candidato)
         existente.telefone = telefone.e164 or candidato.telefone
         existente.telefone_tipo = telefone.tipo
         existente.website_url = candidato.website_url
@@ -269,6 +280,124 @@ def _persistir(
         existente.save()
 
     return sem_site, novos
+
+
+_CAMPOS_LOCALIZACAO = (
+    "endereco",
+    "bairro",
+    "cidade",
+    "estado",
+    "pais",
+    "cep",
+    "latitude",
+    "longitude",
+)
+_CAMPOS_LOCALIZACAO_SEM_COORDENADAS = (
+    "endereco",
+    "bairro",
+    "cidade",
+    "estado",
+    "pais",
+    "cep",
+)
+
+
+def _origem_da_localizacao(candidato: ProspectCandidate) -> str:
+    if any(
+        valor is not None for valor in _valores_de_localizacao(candidato).values()
+    ):
+        return OrigemLocalizacao.FONTE
+    return OrigemLocalizacao.DESCONHECIDA
+
+
+def _valores_de_localizacao(candidato: ProspectCandidate) -> dict[str, object | None]:
+    valores = {
+        campo: _valor_de_localizacao(getattr(candidato, campo))
+        for campo in _CAMPOS_LOCALIZACAO_SEM_COORDENADAS
+    }
+    latitude, longitude = _par_de_coordenadas_valido(
+        candidato.latitude,
+        candidato.longitude,
+    )
+    valores["latitude"] = latitude
+    valores["longitude"] = longitude
+    return valores
+
+
+def _valor_de_localizacao(valor: object) -> object | None:
+    """Trata o legado ``""`` como ausência, sem tocar no parser Google."""
+    if isinstance(valor, str) and not valor.strip():
+        return None
+    return valor
+
+
+def _par_de_coordenadas_valido(
+    latitude: object,
+    longitude: object,
+) -> tuple[float | None, float | None]:
+    """Normaliza coordenadas somente quando a fonte declarou um par válido.
+
+    A regra vive aqui, na fronteira comum das fontes: parser algum pode gravar
+    latitude ou longitude isoladamente, nem deixar NaN/infinito atravessar
+    para o banco.
+    """
+    if not _coordenada_valida(latitude, -90, 90):
+        return None, None
+    if not _coordenada_valida(longitude, -180, 180):
+        return None, None
+    return float(latitude), float(longitude)
+
+
+def _coordenada_valida(valor: object, minimo: float, maximo: float) -> bool:
+    return (
+        isinstance(valor, (int, float))
+        and not isinstance(valor, bool)
+        and math.isfinite(valor)
+        and minimo <= valor <= maximo
+    )
+
+
+def _atualizar_localizacao(existente: Prospect, candidato: ProspectCandidate) -> None:
+    """Atualiza apenas fatos recebidos, preservando correção humana.
+
+    A proveniência é do conjunto porque uma edição humana pode relacionar
+    endereço, CEP e coordenadas. Escolhemos preservar o conjunto inteiro em
+    vez de misturar fonte e correção manual sem evidência por campo.
+    """
+    if existente.origem_localizacao == OrigemLocalizacao.MANUAL:
+        return
+
+    valores = _valores_de_localizacao(candidato)
+    recebeu_localizacao = False
+    for campo in _CAMPOS_LOCALIZACAO:
+        valor = valores[campo]
+        if valor is not None:
+            setattr(existente, campo, valor)
+            recebeu_localizacao = True
+
+    if (
+        recebeu_localizacao
+        and existente.origem_localizacao == OrigemLocalizacao.DESCONHECIDA
+        and _localizacao_atual_veio_do_candidato(existente, valores)
+    ):
+        existente.origem_localizacao = OrigemLocalizacao.FONTE
+
+
+def _localizacao_atual_veio_do_candidato(
+    prospect: Prospect,
+    valores_do_candidato: dict[str, object | None],
+) -> bool:
+    """Não transforma histórico ambíguo em fato declarado pela fonte.
+
+    Como a proveniência é do conjunto, um prospect ``DESCONHECIDA`` só vira
+    ``FONTE`` quando cada campo que restou preenchido foi recebido nesta mesma
+    resposta. Latitude e longitude já chegam normalizadas como par indivisível.
+    """
+    return all(
+        valores_do_candidato[campo] is not None
+        for campo in _CAMPOS_LOCALIZACAO
+        if _valor_de_localizacao(getattr(prospect, campo)) is not None
+    )
 
 
 def executar_varredura(
@@ -296,10 +425,12 @@ def executar_varredura(
         )
 
     texto_query = _montar_query(segmento_rotulo, cidade, estado)
+    nicho_beleza = Nicho.objects.get(codigo="beleza")
 
     varredura = Varredura.objects.create(
         termo_busca=texto_query,
         segmento=segmento,
+        nicho=nicho_beleza,
         fonte=classe_da_fonte(fonte).ORIGEM,
         cidade=cidade,
         estado=estado,

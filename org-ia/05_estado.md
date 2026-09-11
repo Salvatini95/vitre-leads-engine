@@ -3,18 +3,18 @@
 > Documento de continuidade. Quem assumir a próxima sessão (Opus, Son Coder ou
 > Codex) lê este arquivo primeiro.
 
-**Última atualização:** 2026-09-02
+**Última atualização:** 2026-09-10
 **Fase:** 1 — captação e qualificação (concluída) + fonte de contingência
 
 ---
 
 ## O que está pronto e verificado
 
-Bootstrap completo, 94 testes passando (`uv run pytest`).
+Bootstrap completo, 158 testes passando (`uv run pytest`).
 
 | Área | Arquivo | Estado |
 |---|---|---|
-| Modelo de dados | `leads/models.py` | 6 entidades + proxy `ProspectVerificacao`, 5 migrations aplicadas |
+| Modelo de dados | `leads/models.py` | entidades de captação, CRM e `Nicho` + proxy `ProspectVerificacao` |
 | Grade geográfica | `leads/services/grade.py` | testado, contiguidade garantida |
 | Cliente Places | `leads/sources/google_places.py` | paginação, retry, field mask travado |
 | Contrato de fonte | `leads/sources/base.py` + `__init__.py` | interface + registro das fontes |
@@ -24,6 +24,50 @@ Bootstrap completo, 94 testes passando (`uv run pytest`).
 | Orquestração | `leads/services/captacao.py` | franquia, dedup, banimento |
 | Comandos | `manage.py gerar_grade` / `captar` | `--dry-run` funcional |
 | Painel | `leads/admin.py` | curadoria em lote, funil, follow-up, fila de verificação |
+
+### Nicho e Segmento — estrutura aplicada
+
+A migration `0011_nicho_prospect_nicho_varredura_nicho` foi aplicada ao banco
+local. Ela cria o nicho comercial inicial
+`beleza` / **Beleza**, associa apenas o lote histórico cuja varredura de origem
+comprova a campanha de beleza e torna `Prospect.nicho` obrigatório.
+
+- **Nicho** é a classificação comercial estável do prospect.
+- **Segmento** permanece sendo o contexto técnico de busca e a seleção da copy
+  manual de WhatsApp; não foi renomeado nem teve escolhas alteradas.
+- Localização por cidade, estado ou Brasil como estratégia de captação é uma
+  etapa futura independente e não está incluída nesta migration.
+
+### Localização factual do Prospect — Etapa 2
+
+- `Varredura.cidade` e `Varredura.estado` continuam sendo exclusivamente o
+  alvo da busca; não podem ser usados como fallback factual do prospect.
+- `Prospect` guarda a localização declarada pela fonte ou corrigida no Admin,
+  com `origem_localizacao` em `DESCONHECIDA`, `FONTE` ou `MANUAL`.
+- A migration estrutural `0012_localizacao_factual_do_prospect` foi aplicada
+  com sucesso. Ela não contém backfill, limpeza ou reinterpretação: os 400
+  históricos permanecem inalterados. A revisão desses dados exigirá etapa
+  humana específica, pois o esquema anterior não registra autoria por campo
+  geográfico.
+
+**Verificação atual da Etapa 2 (após aplicar a migration 0012):**
+
+- Migrations `0001` até `0012` aplicadas no banco local.
+- `uv run python manage.py check` → sem problemas.
+- `uv run pytest` → **176 testes passando**.
+- `uv run python manage.py makemigrations --check` → `No changes detected`.
+- `git diff --check` → passou.
+
+**Auditoria pós-migration:**
+
+| Métrica | Valor |
+|---|---|
+| Prospects preservados | **400** |
+| Com endereço preenchido | **399** |
+| Ainda com cidade `Maringá` e estado `PR` | **400** |
+| País, CEP, latitude e longitude `NULL` | **400** |
+| Pares incompletos de coordenadas | **0** |
+| `origem_localizacao=DESCONHECIDA` | **400** |
 
 **Verificação final da sessão (2026-08-13, antes do fechamento):**
 
@@ -676,7 +720,7 @@ O objetivo é lembrar o contato anterior e retomar a conversa de maneira curta.
 
 Também existe mensagem de continuidade para conversas que já começaram.
 
-## Estado técnico validado
+## Registro histórico — estado técnico validado
 
 Validação executada após as alterações:
 

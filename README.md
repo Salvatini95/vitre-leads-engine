@@ -90,6 +90,26 @@ capturou o prospect — você roda uma varredura por termo e não precisa de
 heurística sobre o nome fantasia. Correções manuais no Admin ligam
 `revisado_manualmente` e nunca são desfeitas por uma nova varredura.
 
+## Nicho, segmento e localização
+
+`Nicho` é a classificação comercial estável do prospect. O nicho inicial é
+`beleza` / **Beleza** e novos nichos poderão ser cadastrados no Admin quando
+forem definidos comercialmente.
+
+`Segmento` continua sendo o contexto técnico já existente: ele participa da
+busca atual e escolhe a copy manual de WhatsApp. Não é substituído por nicho;
+as escolhas e mensagens atuais permanecem intactas.
+
+`Varredura.cidade` e `Varredura.estado` representam o **alvo da busca**. Já a
+localização em `Prospect` representa somente o que a fonte declarou para o
+estabelecimento, ou uma correção manual posterior. Nunca há fallback do alvo
+da busca para o prospect.
+
+`Prospect.origem_localizacao` informa se esse conjunto factual é
+`DESCONHECIDA`, veio da `FONTE` ou foi corrigido `MANUAL`. Os 400 prospects
+históricos não foram limpos nesta etapa: sua revisão é uma operação futura e
+explícita.
+
 ## Testes
 
 ```bash
