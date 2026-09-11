@@ -1,0 +1,328 @@
+# Estado da sessão — vitre-leads-engine
+
+> Documento de continuidade. Quem assumir a próxima sessão (Opus, Son Coder ou
+> Codex) lê este arquivo primeiro.
+
+**Última atualização:** 2026-08-13
+**Fase:** 1 — captação e qualificação (concluída) + fonte de contingência
+
+---
+
+## O que está pronto e verificado
+
+Bootstrap completo, 94 testes passando (`uv run pytest`).
+
+| Área | Arquivo | Estado |
+|---|---|---|
+| Modelo de dados | `leads/models.py` | 6 entidades + proxy `ProspectVerificacao`, 5 migrations aplicadas |
+| Grade geográfica | `leads/services/grade.py` | testado, contiguidade garantida |
+| Cliente Places | `leads/sources/google_places.py` | paginação, retry, field mask travado |
+| Contrato de fonte | `leads/sources/base.py` + `__init__.py` | interface + registro das fontes |
+| Cliente Foursquare | `leads/sources/foursquare.py` | contingência, busca por categoria |
+| Geocoding | `leads/sources/geocoding.py` | bbox de cidade |
+| Filtro sem-site | `leads/filters/site_validator.py` + `blacklist.yml` | 3 camadas, com evidência |
+| Orquestração | `leads/services/captacao.py` | franquia, dedup, banimento |
+| Comandos | `manage.py gerar_grade` / `captar` | `--dry-run` funcional |
+| Painel | `leads/admin.py` | curadoria em lote, funil, follow-up, fila de verificação |
+
+**Verificação final da sessão (2026-08-13, antes do fechamento):**
+
+- `uv run pytest` → **94 testes, todos passando, suíte limpa**.
+- `manage.py check` → sem issues (0 silenced).
+- `makemigrations --check --dry-run` → `No changes detected` (nenhuma
+  migration pendente de gerar).
+- Migrations `0001`–`0005` aplicadas no banco local.
+- `captar --segmento SALAO --quadrante Q1 --dry-run` (Google, sem `--fonte`)
+  → saída idêntica à da Fase 1, sem regressão.
+
+### Estado real do banco local ao fechar
+
+| Métrica | Valor |
+|---|---|
+| Prospects `origem=FOURSQUARE` | **400** |
+| `status_funil` | `VERIFICAR_SITE: 400` (100% na fila) |
+| `tem_site_real` | **`None`: 373** (desconhecido) · **`False`: 27** (checado) |
+| `ativo_no_funil` | `False: 400` |
+| `e_alvo == True` | **0** — nenhum qualificado automaticamente |
+| Prospects `origem=GOOGLE_PLACES` | **0** (billing bloqueado, nunca captou) |
+| Fila `ProspectVerificacao` | 400, ordenada por telefone: **158 com · 242 sem** |
+
+`db.sqlite3` está no `.gitignore` — esses 400 são dado local, não vão para o
+repo. Quem clonar o projeto começa com banco vazio.
+
+## Foursquare — fonte alternativa (sessão de 2026-08-13)
+
+### Por que entrou
+
+O **billing do Google Cloud está bloqueado**. Chamado de suporte aberto, **sem
+previsão de resolução** — não há data prometida nem canal de escalonamento
+ativo. Sem billing, a Places API não responde, e a Fase 1 inteira fica parada
+por dependência de uma única fonte. A Foursquare entrou para destravar o
+trabalho, **não para substituir o Google**.
+
+### Status: funciona, e não é substituição
+
+Varredura real de Maringá em 2026-08-13, segmento SALAO, 16 quadrantes,
+**19 requisições**: **408 estabelecimentos, 400 sem site, 395 prospects novos**.
+
+Distribuição muito desigual — 5 dos 16 quadrantes vieram **zerados** (Q5, Q9,
+Q13, Q14, Q16), e a massa está no centro (Q7 = 89, Q11 = 63, Q8 = 54). Isso é
+esperado: a Foursquare mapeia bem região central e comercial, e some no
+bairro.
+
+### O número que decide: 27 de 400
+
+**Só 6,8% dos prospects (27 de 400) têm QUALQUER website no dado da
+Foursquare.** Os outros 373 vieram com o campo vazio, e o validador de site
+registrou `sem website` — ou seja, ele não teve o que checar.
+
+Isso é o problema central desta fonte, e é mais grave que a cobertura menor:
+
+- O critério comercial da VITRE é "não tem site". Do Google, `websiteUri` é
+  populado com frequência e as três camadas do validador fazem trabalho real.
+- Da Foursquare, "sem site" quase sempre significa **"a Foursquare não sabe"**,
+  não "o negócio não tem site". O filtro deixa de filtrar.
+- Consequência prática: a fila de curadoria enche de falso positivo, e o custo
+  sai do bolso em tempo manual, não em fatura.
+
+Outras lacunas medidas no mesmo lote:
+
+- **Telefone em só 158 de 400 (39,5%).** Sem telefone o lead não é acionável —
+  a abordagem é manual e é por telefone/WhatsApp.
+- **Nota e total de avaliações: zero prospects.** São campos pagos (ver
+  abaixo), e o Admin ordena a fila de curadoria justamente por
+  `total_avaliacoes`. Prospect da Foursquare entra na fila sem critério de
+  prioridade.
+
+**Veredito: manter como contingência e banco de teste do pipeline. Não é
+substituição definitiva.** Quando o billing do Google destravar, o Google
+volta a ser fonte primária sem nenhuma mudança de código — ele já é o default.
+
+### Três armadilhas da API que custaram descoberta
+
+1. **`query` não é text search.** Passar a frase que o Google entende
+   (`"Salão de beleza em Maringá PR"`) devolve hotel, universidade e
+   supermercado — a API casa por relevância difusa e ignora o segmento. E
+   `query="salão de beleza"` com acento devolve **zero**. A busca foi trocada
+   para **`fsq_category_ids`**, com o texto só como fallback. No mesmo
+   quadrante: 41 resultados de lixo por texto → 20 salões reais por categoria.
+   Os ids de categoria estão fixos em `foursquare.py` (o endpoint de taxonomia
+   responde 404 nesta geração; os ids foram colhidos das próprias respostas).
+2. **`rating` e `stats` são campos PAGOS.** Consomem crédito de API, não a
+   franquia de chamadas. A conta está **sem crédito**, e pedi-los devolve
+   `429 "no API credits remaining"` que derruba a **busca inteira**, não só a
+   nota. Ficam desligados por padrão (`FOURSQUARE_CAMPOS_PRO=False`).
+3. **A geração da API mudou.** A chave do `.env` é da geração atual
+   (`places-api.foursquare.com`, auth `Bearer`); a v3 legada
+   (`api.foursquare.com/v3`) responde **401** para ela. O cliente deriva o
+   estilo de auth do host em `FOURSQUARE_API_BASE` e aceita `fsq_place_id` e
+   `fsq_id`. Os campos `closed_bucket`/`closed_status` da v3 **não existem**
+   mais — devolvem 400; o campo de fechamento é `date_closed`.
+
+### Mudança de regra: fonte não confiável não qualifica sozinha
+
+**Regra nova (2026-08-13):** prospect de fonte cujo campo `website` não é
+confiável **não pode ser tratado como qualificado pelo critério "sem site"**.
+Ele nasce em `StatusFunil.VERIFICAR_SITE` e só sai dali por confirmação
+manual.
+
+**Motivo.** O filtro "sem site = alvo" foi desenhado para o Google, onde
+`websiteUri` é populado de verdade — vazio ali é evidência. Na Foursquare,
+373 dos 400 (93%) vieram vazios porque **a fonte não tem o dado**. O sistema
+estava gravando `tem_site_real=False` nesses casos, ou seja, afirmando um
+fato que ninguém apurou, e `e_alvo` retornava `True` para todos eles.
+
+O risco não era o código aprovar sozinho — a aprovação sempre foi manual
+(`ProspectAdmin.aprovar_para_funil`). Era que os 373 palpites ficavam
+**indistinguíveis** de prospect qualificado de verdade na mesma tela, e um
+"selecionar tudo → aprovar" levaria os dois juntos.
+
+**Como ficou:**
+
+- `FonteDeProspects.SITE_CONFIAVEL` — a política vive na fonte, não espalhada
+  em `if origem == "FOURSQUARE"`. Google `True`, Foursquare `False`.
+- `tem_site_real=None` quando nada foi verificado. O campo já reservava NULL
+  para "desconhecido"; agora ele é usado com esse significado. Os 27 que
+  tiveram URL real checada (404, DNS morto, conteúdo vazio, perfil de
+  terceiro) mantêm `False` — ali houve apuração de verdade.
+- `aprovar_para_funil` recusa `VERIFICAR_SITE` e avisa quantos bloqueou.
+- Fila própria no Admin: **«Fila de verificação de site»** (proxy model
+  `ProspectVerificacao`), **ordenada por telefone preenchido primeiro**. Não
+  usa `rating`/`total_avaliacoes` porque `FOURSQUARE_CAMPOS_PRO` segue False
+  e os 400 estão com esses campos nulos — ordenar por eles seria ordem
+  aleatória. Telefone (158 dos 400) é o único sinal de que vale gastar
+  revisão manual: sem telefone não há como abordar nem se o lead se confirmar.
+- Saídas da fila: "Confirmei: NÃO tem site" → volta a `NOVO` e segue a
+  curadoria normal; "Verifiquei: TEM site" → `DESCARTADO`.
+
+**Retroativo.** Migration `0005_foursquare_pendente_de_verificacao` moveu os
+400 já gravados. Só `origem=FOURSQUARE` e só `revisado_manualmente=False` —
+curadoria humana não é desfeita por migration. UPDATE puro: não recaptura,
+não duplica, não toca em `GOOGLE_PLACES`. Reversibilidade **testada numa
+cópia do banco**, ida e volta exatas: rollback devolve `{NOVO: 400,
+tem_site_real False: 400}`, reaplicar devolve `{VERIFICAR_SITE: 400, None:
+373, False: 27}`.
+
+### Decisão fechada: manter os dois motivos separados na fila
+
+**Os 27 "site checado, confirmar" NÃO são uniformizados com os 373
+"desconhecido".** Decisão do operador, tomada nesta sessão, após a opção de
+uniformizar ter sido colocada explicitamente. **Não reabrir.**
+
+O que separa os dois grupos é se houve apuração:
+
+| Grupo | `tem_site_real` | O que aconteceu | Tag na fila |
+|---|---|---|---|
+| **373** | `None` | A Foursquare não deu URL. **Nada foi verificado.** | `Foursquare · site desconhecido — verificar manualmente` |
+| **27** | `False` | O validador seguiu uma URL real e reprovou (404, DNS morto, conteúdo vazio, perfil de terceiro). | `Foursquare · site checado, confirmar — verificar manualmente` |
+
+**Motivo de manter separado:** `tem_site_real=False` nos 27 é **fato
+apurado**, com evidência gravada em `site_evidencia`. Achatar isso para
+`None` apagaria trabalho de verificação que o sistema já fez e obrigaria a
+refazê-lo à mão. Os dois grupos vão para a mesma fila — ambos precisam de
+confirmação humana — mas chegam lá com históricos diferentes, e a tag diz
+qual é qual. Na prática os 27 são revisão mais rápida: já há evidência para
+ler antes de decidir.
+
+**Fluxo do Google: zero alteração.** Guardado por testes de regressão em
+`tests/test_verificacao_site.py` — vazio continua qualificando, recaptura
+continua sem tocar em `status_funil`, quem tem site continua fora do banco.
+
+### Telegram: não construído, por decisão
+
+O pedido original falava em "enviar ao bot do Telegram". **Não existe e nunca
+existiu integração com Telegram neste repo** — zero referências a bot, token
+ou chat_id (o único match de busca é `telegram.me` na blacklist de domínios,
+que é outra coisa). Isso foi levantado antes de qualquer alteração.
+
+**Decisão do operador:** fila no Django Admin agora, Telegram depois. Nada de
+bot nesta sessão.
+
+**O que fica pronto para o sender futuro:** `ProspectVerificacao`
+(`leads/models.py`) já é exatamente a fila que um bot precisaria consumir —
+recorte em `VERIFICAR_SITE` e ordenação telefone-primeiro já implementados em
+`ProspectVerificacaoAdmin.get_queryset` / `get_ordering`. Um sender futuro lê
+esse queryset e usa `prospect.tag_verificacao` como texto da etiqueta. Nada
+precisa ser refeito, só plugado.
+
+Ao construir: lembrar que a decisão congelada "**nenhum envio automático**"
+fala de abordagem a prospect, não de aviso interno ao operador — mas a
+distinção precisa ser explicitada antes de escrever a primeira linha.
+
+### Franquia separada, de propósito
+
+`Varredura.fonte` (migration `0003`) existe para que o consumo seja contado
+**por fonte**. Sem isso, varredura na Foursquare descontaria da franquia do
+Google e travaria a captação cedo. Tetos: Google 1.000/mês, Foursquare
+10.000/mês (`FOURSQUARE_FRANQUIA_MENSAL`).
+
+### Lacuna conhecida, não corrigida
+
+`total_requisicoes` conta apenas requisições **bem-sucedidas**. Tentativa que
+falha e é retentada (4x em 5xx/429) não entra no contador. Vale para as duas
+fontes — é comportamento herdado do cliente do Google, não regressão. Numa
+API que responde 429 por falta de crédito, isso subestima o gasto real. Se a
+franquia da Foursquare virar restrição de verdade, corrigir antes.
+
+## Decisões tomadas
+
+1. **Places API como fonte primária**, não dataset CNPJ. O critério comercial
+   é "não tem site", e só o Places responde isso. CNPJ fica para
+   enriquecimento futuro (nome do sócio, que o Google não dá).
+2. **Nenhum envio automático.** Sem bot de WhatsApp. Regra não negociável.
+3. **Segmento = termo de busca**, não CNAE nem `primaryType`. Elimina a
+   heurística de palavra-chave para separar salão de barbearia.
+4. **Django + SQLite, sem container e sem VPS.** Operação de uma pessoa.
+   Infra só quando houver receita.
+5. **Banimento denormalizado** (`Descarte.origem_id`): o veto sobrevive à
+   exclusão do prospect. Falha encontrada por teste nesta sessão.
+6. **Ordenação do Admin por `total_avaliacoes` desc**: negócio consolidado e
+   sem site é a melhor porta de entrada.
+7. **Fonte é plugável, Google continua default** (2026-08-13). `--fonte` no
+   `captar`, contrato em `leads/sources/base.py`, registro em
+   `leads/sources/__init__.py`. Omitir `--fonte` mantém o comportamento
+   anterior byte a byte. As duas fontes não se conhecem e não compartilham
+   franquia.
+8. **Fonte não confiável não qualifica sozinha** (2026-08-13).
+   `SITE_CONFIAVEL` na fonte; Foursquare nasce em `VERIFICAR_SITE`.
+   "Sem site" só vale como qualificação onde a fonte popula `website`.
+9. **Os 27 "site checado" ficam distintos dos 373 "desconhecido"**
+   (2026-08-13). Uniformizar apagaria apuração já feita. **Não reabrir.**
+10. **Telegram não construído** (2026-08-13). Fila no Admin;
+    `ProspectVerificacao` pronto para um sender consumir depois.
+
+## Calibrações que dependem de dado real
+
+O filtro de site tem dois números que só fecham com o primeiro lote de
+Maringá. Ambos já têm teste protegendo contra regressão:
+
+- `_MAX_TEXTO_PARKED = 250` — acima disso, "em breve" num site legítimo
+  viraria falso positivo. Baixado de 500 para 250 nesta sessão, por falha de
+  teste.
+- `blacklist.yml` — cobre social, link-in-bio, agendamento (Trinks, Booksy,
+  Avec), agregadores e encurtadores. Ampliar conforme aparecerem casos reais:
+  cada prospect traz `site_evidencia` gravada, que é o material de auditoria.
+
+## Próxima sessão
+
+### 1. PENDÊNCIA ABERTA — revisão manual da fila de verificação
+
+**É o trabalho que destrava tudo o mais, e é 100% humano.** Os 400 prospects
+da Foursquare estão parados em `VERIFICAR_SITE` e nenhum avança sem alguém
+olhar. Nada de código é necessário para começar: a tela está pronta.
+
+**Onde:** Django Admin → **«Fila de verificação de site»**
+(`ProspectVerificacao`). Já vem filtrada e ordenada.
+
+**Ordem de ataque — começar pelos 158 com telefone.** Eles estão no topo da
+fila por construção. O motivo é econômico: sem telefone não há como abordar
+o lead nem se ele se confirmar sem site, então revisar os 242 sem telefone
+primeiro seria gastar o recurso escasso (seu tempo) no material de menor
+retorno. Os 27 com tag "site checado, confirmar" são os mais rápidos — já há
+`site_evidencia` gravada para ler antes de decidir.
+
+**Como decidir cada linha:** abrir o nome do estabelecimento no Google/
+Instagram e responder uma pergunta só — tem site próprio?
+
+- **Não tem** → ação "Confirmei: NÃO tem site" → vai para `NOVO` e entra na
+  curadoria normal, igual a um lead do Google.
+- **Tem** → ação "Verifiquei: TEM site" → `DESCARTADO`.
+
+Ambas gravam `revisado_manualmente=True`, então recaptura futura não desfaz
+a decisão.
+
+**O número a extrair da revisão:** de cada 100 revisados, quantos tinham site
+de verdade? Essa é a **taxa de falso positivo da Foursquare**, e é ela que
+decide se a fonte serve para prospecção real ou se fica só como banco de
+teste do pipeline. Anotar o resultado aqui na próxima sessão.
+
+### 2. Resto da fila de trabalho
+
+1. **Destravar o billing do Google** — segue sendo o caminho principal. Sem
+   previsão do suporte; enquanto isso a Foursquare cobre o pipeline.
+2. Rodar os outros 4 segmentos na Foursquare (`ESTETICA`, `NAIL`, `LASH`,
+   `SOBRANCELHA`). Atenção: LASH e SOBRANCELHA caem na categoria genérica de
+   beleza — a Foursquare não tem categoria própria para eles, então o ruído
+   será maior.
+3. Quando o Google voltar: `manage.py captar --segmento SALAO` (sem `--fonte`)
+   e comparar os dois lotes no Admin, filtrando por fonte no mesmo quadrante.
+   É a medida direta de cobertura Google x Foursquare.
+4. Auditar `site_evidencia` e recalibrar a blacklist — com dado do Google,
+   que é onde o validador tem URL para checar.
+5. Fase 2: tela de Kanban própria (hoje o funil vive no Admin) e
+   enriquecimento por CNPJ para nome do sócio. O sender de Telegram, se
+   entrar, consome `ProspectVerificacao` (ver acima).
+
+## Pendências de protocolo
+
+- **Commit inicial ainda NÃO feito.** O repositório tem **zero commits** —
+  `git log` responde "does not have any commits yet". Os **46 arquivos** do
+  projeto estão todos como untracked. Commits são GPG-assinados em terminal
+  externo, nunca dentro do agente. Rodar manualmente.
+- `.env` está no `.gitignore` (conferido: `git check-ignore` confirma) e
+  `db.sqlite3` também — os 400 prospects são dado local e não vão ao repo.
+  Reconferir antes do primeiro push.
+- `scripts/save-session.sh` e `scripts/health-check.sh` do sv-protocol
+  **não existem neste repo** (nem em `~/.claude/scripts/`). O health check de
+  início de sessão foi feito na mão: `git log` / `git status` / `git diff`.
+  Criar os scripts é item de protocolo em aberto.

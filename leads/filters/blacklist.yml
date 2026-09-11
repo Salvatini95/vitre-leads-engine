@@ -1,0 +1,109 @@
+# Domínios que NÃO contam como site próprio.
+#
+# O `websiteUri` do Google mente: preenche com Instagram, link-in-bio,
+# plataforma de agendamento, agregador e encurtador. Um estabelecimento cujo
+# "site" é a página do Instagram não tem site — é exatamente o alvo da VITRE.
+#
+# O match é por SUFIXO de domínio: "instagram.com" casa "instagram.com" e
+# "m.instagram.com", mas NÃO casa "naoinstagram.com".
+#
+# Critério para entrar aqui: a URL leva a um perfil/página hospedada por
+# terceiro, onde o estabelecimento não controla domínio nem conteúdo.
+# Construtor de site (Wix, Webnode) NÃO entra: ali existe site de fato,
+# ainda que ruim — esse caso é abordagem comercial diferente.
+
+ignored_domains:
+  # Redes sociais
+  - instagram.com
+  - facebook.com
+  - fb.com
+  - fb.me
+  - tiktok.com
+  - youtube.com
+  - youtu.be
+  - twitter.com
+  - x.com
+  - linkedin.com
+  - pinterest.com
+  - kwai.com
+
+  # Mensageria
+  - wa.me
+  - whatsapp.com
+  - t.me
+  - telegram.me
+
+  # Link-in-bio
+  - linktr.ee
+  - linktree.com
+  - beacons.ai
+  - bio.link
+  - lnk.bio
+  - linklist.bio
+  - campsite.bio
+  - milkshake.app
+  - many.link
+  - solo.to
+
+  # Perfil/site hospedado pelo próprio Google (business.site e negocio.site
+  # foram descontinuados em 2024 e hoje redirecionam para o perfil)
+  - business.site
+  - negocio.site
+  - sites.google.com
+  - g.page
+  - google.com
+  - goo.gl
+  - maps.app.goo.gl
+
+  # Agregadores e diretórios
+  - ifood.com.br
+  - yelp.com
+  - tripadvisor.com
+  - tripadvisor.com.br
+  - guiamais.com.br
+  - apontador.com.br
+  - telelistas.net
+  - solutudo.com.br
+  - encontra-mais.com.br
+
+  # Plataformas de agendamento (a agenda é da plataforma, não é site próprio)
+  - trinks.com
+  - trinks.com.br
+  - booksy.com
+  - avecapp.com.br
+
+  # Encurtadores
+  - bit.ly
+  - tinyurl.com
+  - cutt.ly
+  - encurtador.com.br
+  - abrir.link
+  - shorturl.at
+
+# Termos que indicam domínio estacionado / em construção.
+# Só disparam quando a página tem POUCO texto visível — assim um site real
+# que por acaso escreve "em breve" numa seção não vira falso positivo.
+parked_terms:
+  - dominio estacionado
+  - domínio estacionado
+  - domain is parked
+  - parked domain
+  - this domain is for sale
+  - buy this domain
+  - domínio à venda
+  - em construção
+  - em construcao
+  - under construction
+  - site em manutenção
+  - em manutenção
+  - coming soon
+  - em breve
+  # "aguarde" sozinho é palavra comum demais (aparece em página de
+  # carregamento de site real) — só entra combinada, nunca isolada.
+  - aguarde, em breve
+  - página não encontrada
+  - registre.br
+  - default web site page
+  - it works!
+  - apache2 ubuntu default page
+  - welcome to nginx

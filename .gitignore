@@ -1,0 +1,20 @@
+# Segredos — nunca commitar (regra global SV: .env fora do repo)
+.env
+.env.*
+!.env.example
+
+# Banco local (dado real de prospect não vai para o repo)
+*.sqlite3
+*.sqlite3-journal
+db.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Dumps de captação / trabalho local
+/dados/
+*.log
