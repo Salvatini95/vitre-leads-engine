@@ -65,6 +65,14 @@
         white-space: normal;
     }
 
+    #result_list .field-retorno_followup span {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        white-space: normal !important;
+        overflow-wrap: anywhere;
+    }
+
     /* Canal */
     #result_list .column-canal,
     #result_list .field-canal {
