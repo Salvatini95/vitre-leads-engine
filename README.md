@@ -80,8 +80,21 @@ ser usados juntos. `--dry-run` valida Nicho, fonte e grade e calcula a
 franquia, mas não cria Varredura nem chama API.
 
 Este incremento atende somente captação por **Cidade**, usando a grade já
-gerada. O botão Admin “Nova Captação” e as modalidades Estado e Brasil
-continuam futuros.
+gerada. No Django Admin, um superusuário pode abrir **Varreduras → Nova
+Captação**, selecionar uma Cidade/UF entre as localidades que já possuem grade
+cadastrada, preencher os demais dados do modo novo da CLI e visualizar o plano
+antes de confirmar. Para disponibilizar outra cidade, primeiro é necessário
+gerar ou cadastrar sua grade. A prévia não exige credencial, não cria Varredura
+e não chama API; a confirmação revalida os dados, refaz o plano e chama
+diretamente o mesmo serviço compartilhado pela CLI.
+
+A prévia é assinada por 15 minutos e usa um nonce de uso único associado à
+sessão. O nonce é consumido antes da execução, o botão é desabilitado no
+primeiro clique e o resultado redireciona de volta à listagem de Varreduras.
+Essas proteções reduzem reenvios acidentais no uso local, mas não oferecem
+idempotência transacional nem impedem duas execuções concorrentes. A execução
+é síncrona: pode demorar, e a aba deve permanecer aberta. Captação por Estado
+ou Brasil, execução em background e progresso persistido continuam futuros.
 
 ## Custo
 

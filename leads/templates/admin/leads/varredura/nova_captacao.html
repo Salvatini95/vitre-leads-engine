@@ -1,0 +1,141 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .captacao-conteudo { max-width: 64rem; }
+    .captacao-aviso,
+    .captacao-plano {
+      box-sizing: border-box;
+      margin-block: 1rem;
+      padding: 1rem;
+      border: 1px solid var(--hairline-color);
+      border-radius: 0.25rem;
+      background: var(--darkened-bg);
+    }
+    .captacao-campos {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1rem;
+      margin-block: 1rem;
+    }
+    .captacao-campo label { display: block; font-weight: 600; }
+    .captacao-campo input,
+    .captacao-campo select {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 2.75rem;
+    }
+    .captacao-campo .help { margin: 0.35rem 0 0; padding: 0; }
+    .captacao-plano dl {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.35rem 1rem;
+      margin-bottom: 1rem;
+    }
+    .captacao-plano dt { font-weight: 600; }
+    .captacao-plano dd { margin: 0 0 0.75rem; overflow-wrap: anywhere; }
+    .captacao-acoes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+    }
+    .captacao-acoes button,
+    .captacao-acoes a {
+      box-sizing: border-box;
+      min-height: 2.75rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    @media (min-width: 48rem) {
+      .captacao-campos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .captacao-plano dl { grid-template-columns: minmax(10rem, 1fr) minmax(0, 2fr); }
+      .captacao-plano dd { margin: 0; }
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; <a href="{% url 'admin:leads_varredura_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+    &rsaquo; Nova Captação
+  </div>
+{% endblock %}
+
+{% block content %}
+  <div id="content-main" class="captacao-conteudo">
+    <p class="captacao-aviso" role="note">
+      Esta primeira versão executa a captação de forma síncrona. A operação pode demorar:
+      não feche a aba e não clique novamente depois de confirmar. Execução em background e
+      progresso persistido são futuros.
+    </p>
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {{ formulario.non_field_errors }}
+      <div class="captacao-campos">
+        {% for campo in formulario %}
+          <div class="captacao-campo">
+            {{ campo.errors }}
+            {{ campo.label_tag }}
+            {{ campo }}
+            {% if campo.help_text %}<p class="help">{{ campo.help_text }}</p>{% endif %}
+          </div>
+        {% endfor %}
+      </div>
+
+      {% if plano %}
+        <section class="captacao-plano" aria-labelledby="titulo-plano">
+          <h2 id="titulo-plano">Prévia da captação</h2>
+          <dl>
+            <dt>Nicho</dt><dd>{{ plano.nicho.nome }} ({{ plano.nicho.codigo }})</dd>
+            <dt>Termo</dt><dd>{{ plano.termo }}</dd>
+            <dt>Consulta completa</dt><dd>{{ plano.consulta }}</dd>
+            <dt>Segmento</dt><dd>{{ segmento_rotulo }}</dd>
+            <dt>Cidade/Estado</dt><dd>{{ plano.cidade }}/{{ plano.estado }}</dd>
+            <dt>Fonte</dt><dd>{{ plano.fonte }}</dd>
+            <dt>Quadrante</dt><dd>{% if formulario.cleaned_data.quadrante %}{{ formulario.cleaned_data.quadrante }}{% else %}todos{% endif %}</dd>
+            <dt>Número de quadrantes</dt><dd>{{ plano.quadrantes|length }}</dd>
+            <dt>Consumo atual</dt><dd>{{ plano.consumo_franquia }} requisição(ões)</dd>
+            <dt>Teto mensal</dt><dd>{{ plano.teto_franquia }} requisição(ões)</dd>
+            <dt>Saldo atual</dt><dd>{{ plano.saldo_franquia }} requisição(ões)</dd>
+            <dt>Estimativa máxima</dt><dd>até {{ plano.estimativa_requisicoes }} requisição(ões)</dd>
+          </dl>
+          <p role="note">
+            Ao confirmar, a operação pode consumir até {{ plano.estimativa_requisicoes }}
+            requisição(ões) e pode demorar. Esse máximo é uma estimativa, não uma promessa
+            de consumo integral. A prévia vale por {{ captacao_assinatura_max_age_minutos }} minutos.
+          </p>
+          <input type="hidden" name="assinatura_previa" value="{{ assinatura_previa }}">
+          <input type="hidden" name="confirmar_captacao" value="1">
+        </section>
+      {% endif %}
+
+      <div class="captacao-acoes submit-row">
+        <button type="submit" name="visualizar_plano" class="button">Visualizar plano</button>
+        {% if plano %}
+          <button type="submit" class="default" id="confirmar-captacao">
+            Confirmar captação
+          </button>
+        {% endif %}
+        <a href="{% url 'admin:leads_varredura_changelist' %}" class="button cancel-link">Cancelar</a>
+      </div>
+    </form>
+  </div>
+  <script>
+    (() => {
+      const botao = document.getElementById("confirmar-captacao");
+      if (!botao) return;
+      botao.form.addEventListener("submit", (evento) => {
+        if (evento.submitter !== botao) return;
+        botao.disabled = true;
+        botao.textContent = "Captação em andamento…";
+      });
+    })();
+  </script>
+{% endblock %}

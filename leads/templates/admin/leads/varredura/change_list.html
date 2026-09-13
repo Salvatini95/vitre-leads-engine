@@ -1,0 +1,10 @@
+{% extends "admin/change_list.html" %}
+
+{% block object-tools-items %}
+  {% if request.user.is_superuser %}
+    <li>
+      <a href="{% url 'admin:leads_varredura_nova_captacao' %}" class="addlink">Nova Captação</a>
+    </li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}

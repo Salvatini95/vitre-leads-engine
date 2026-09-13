@@ -4,13 +4,13 @@
 > Codex) lê este arquivo primeiro.
 
 **Última atualização:** 2026-09-11
-**Fase:** Etapa 3 — captação por Cidade, incremento 1 implementado
+**Fase:** Etapa 3 — captação por Cidade na CLI e no Admin
 
 ---
 
 ## O que está pronto e verificado
 
-Bootstrap completo, 215 testes passando (`uv run pytest`).
+Bootstrap completo, 239 testes passando (`uv run pytest`).
 
 | Área | Arquivo | Estado |
 |---|---|---|
@@ -23,7 +23,7 @@ Bootstrap completo, 215 testes passando (`uv run pytest`).
 | Filtro sem-site | `leads/filters/site_validator.py` + `blacklist.yml` | 3 camadas, com evidência |
 | Orquestração | `leads/services/captacao.py` | franquia, dedup, banimento |
 | Comandos | `manage.py gerar_grade` / `captar` | `--dry-run` funcional |
-| Painel | `leads/admin.py` | curadoria em lote, funil, follow-up, fila de verificação |
+| Painel | `leads/admin.py` | curadoria, funil, follow-up, fila de verificação e Nova Captação |
 
 ### Nicho e Segmento — estrutura aplicada
 
@@ -82,6 +82,36 @@ amplas por Estado ou Brasil.
 **Verificação deste incremento:** `manage.py check` sem problemas; **215
 testes passando**; `makemigrations --check` sem mudanças; nenhuma API real
 foi chamada.
+
+### Etapa 3, incremento 2 — Nova Captação no Admin
+
+A listagem de Varreduras oferece **Nova Captação** exclusivamente a
+superusuários. O formulário cobre somente Cidade e usa o mesmo contrato do
+modo novo da CLI: Nicho ativo, termo da atividade sem localização, Segmento
+`OUTRO` por padrão, Cidade/UF selecionada somente entre localidades com grade
+cadastrada, fonte e quadrante opcional. Para disponibilizar outra cidade, sua
+grade precisa ser gerada ou cadastrada primeiro. A listagem de Varreduras também
+exibe e filtra por Nicho; registros operacionais antigos com Nicho nulo continuam
+visíveis.
+
+O fluxo tem duas etapas. **Visualizar plano** chama somente
+`planejar_captacao_cidade()`, sem exigir credencial, criar Varredura ou acessar
+a rede. **Confirmar captação** valida o formulário novamente, verifica a
+assinatura da prévia e seu nonce de sessão, refaz o plano imediatamente e só
+então chama `executar_captacao_cidade()` com o novo plano. A assinatura vale
+15 minutos e o nonce é consumido antes da execução. Depois de sucesso ou erro
+operacional, a resposta redireciona à listagem para evitar reenvio por refresh.
+
+A execução é síncrona nesta versão local. A assinatura, o nonce e o bloqueio
+do botão após o primeiro clique reduzem reenvios acidentais, mas não garantem
+idempotência transacional nem impedem captações concorrentes. Estado, Brasil,
+execução em background e progresso persistido continuam futuros. O requisito
+de filas por status permanece futuro/não implementado na seção de semântica
+operacional.
+
+**Verificação atual:** `manage.py check` sem problemas; **239 testes
+passando**; `makemigrations --check` sem mudanças; nenhuma API real foi
+chamada.
 
 ### Localização factual do Prospect — Etapa 2
 

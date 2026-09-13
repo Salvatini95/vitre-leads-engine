@@ -7,18 +7,24 @@ usada várias vezes por dia e o que importa é velocidade.
 
 from __future__ import annotations
 
+import logging
+import secrets
 from datetime import timedelta
 from urllib.parse import quote
 
 from django import forms
 from django.contrib import admin, messages
 from django.contrib.admin.widgets import AdminSplitDateTime
+from django.core import signing
+from django.core.exceptions import PermissionDenied
 from django.db.models import BooleanField, Case, QuerySet, Value, When
 from django.http import HttpResponseRedirect
+from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
+from leads.forms import CaptacaoCidadeForm
 from leads.models import (
     Canal,
     Descarte,
@@ -33,7 +39,23 @@ from leads.models import (
     StatusFunil,
     Varredura,
 )
+from leads.services.captacao_cidade import (
+    CaptacaoCidadeError,
+    CaptacaoCidadeFalhaFinalizacaoError,
+    CaptacaoCidadeParcialError,
+    ResultadoCaptacaoCidade,
+    executar_captacao_cidade,
+    planejar_captacao_cidade,
+)
 from leads.utils.telefone import TipoTelefone
+
+
+logger = logging.getLogger(__name__)
+
+_CAPTACAO_ASSINATURA_SALT = "leads.admin.nova_captacao.v1"
+_CAPTACAO_ASSINATURA_MAX_AGE = 15 * 60
+_CAPTACAO_NONCES_SESSION_KEY = "leads_nova_captacao_nonces"
+_CAPTACAO_NONCES_MAXIMOS = 10
 
 
 class SocioInline(admin.TabularInline):
@@ -484,8 +506,10 @@ Separei um exemplo para te mostrar a ideia. Posso te mandar o link também?"""
 
 @admin.register(Varredura)
 class VarreduraAdmin(admin.ModelAdmin):
+    change_list_template = "admin/leads/varredura/change_list.html"
     list_display = (
         "termo_busca",
+        "nicho",
         "fonte",
         "quadrante",
         "status",
@@ -498,12 +522,282 @@ class VarreduraAdmin(admin.ModelAdmin):
     )
     # Filtrar por fonte é o que permite comparar cobertura Google x Foursquare
     # no mesmo quadrante.
-    list_filter = ("status", "fonte", "segmento", "cidade")
+    list_filter = ("status", "fonte", "segmento", "nicho", "cidade")
     readonly_fields = tuple(f.name for f in Varredura._meta.fields)
 
     def has_add_permission(self, request):
         # Varredura nasce da captação, nunca da mão.
         return False
+
+    def get_urls(self):
+        urls = super().get_urls()
+        urls_nova_captacao = [
+            path(
+                "nova-captacao/",
+                self.admin_site.admin_view(self.nova_captacao_view),
+                name="leads_varredura_nova_captacao",
+            )
+        ]
+        return urls_nova_captacao + urls
+
+    def nova_captacao_view(self, request):
+        """Adapta o serviço de Cidade para um fluxo Admin em duas etapas.
+
+        Assinatura e nonce reduzem reenvio sequencial, mas a sessão não é uma
+        reserva atômica: confirmações concorrentes ainda podem executar juntas.
+        """
+        if not request.user.is_superuser:
+            raise PermissionDenied
+
+        formulario = CaptacaoCidadeForm(request.POST or None)
+        plano = None
+        assinatura = ""
+
+        if request.method == "POST" and "visualizar_plano" in request.POST:
+            if formulario.is_valid():
+                try:
+                    plano = self._planejar_captacao(formulario)
+                except CaptacaoCidadeError as exc:
+                    formulario.add_error(None, str(exc))
+                else:
+                    assinatura = self._assinar_previa(request, formulario)
+
+        elif request.method == "POST" and "confirmar_captacao" in request.POST:
+            resposta = self._confirmar_captacao(request, formulario)
+            if resposta is not None:
+                return resposta
+
+        contexto = {
+            **self.admin_site.each_context(request),
+            "title": "Nova Captação",
+            "opts": self.model._meta,
+            "formulario": formulario,
+            "plano": plano,
+            "assinatura_previa": assinatura,
+            "segmento_rotulo": (
+                Segmento(plano.segmento).label if plano is not None else ""
+            ),
+            "captacao_assinatura_max_age_minutos": (
+                _CAPTACAO_ASSINATURA_MAX_AGE // 60
+            ),
+        }
+        return TemplateResponse(
+            request,
+            "admin/leads/varredura/nova_captacao.html",
+            contexto,
+        )
+
+    @staticmethod
+    def _planejar_captacao(formulario: CaptacaoCidadeForm):
+        dados = formulario.cleaned_data
+        cidade, estado = dados["localidade"]
+        return planejar_captacao_cidade(
+            nicho_codigo=dados["nicho"].codigo,
+            termo=dados["termo"],
+            segmento=dados["segmento"],
+            cidade=cidade,
+            estado=estado,
+            fonte=dados["fonte"],
+            quadrante_rotulo=dados["quadrante"] or None,
+        )
+
+    def _assinar_previa(self, request, formulario: CaptacaoCidadeForm) -> str:
+        nonce = secrets.token_urlsafe(24)
+        nonces = list(request.session.get(_CAPTACAO_NONCES_SESSION_KEY, ()))
+        nonces.append(nonce)
+        request.session[_CAPTACAO_NONCES_SESSION_KEY] = nonces[
+            -_CAPTACAO_NONCES_MAXIMOS:
+        ]
+        payload = {**formulario.dados_canonicos(), "nonce": nonce}
+        return signing.dumps(payload, salt=_CAPTACAO_ASSINATURA_SALT, compress=True)
+
+    def _confirmar_captacao(self, request, formulario: CaptacaoCidadeForm):
+        assinatura = request.POST.get("assinatura_previa", "")
+        try:
+            payload = signing.loads(
+                assinatura,
+                salt=_CAPTACAO_ASSINATURA_SALT,
+                max_age=_CAPTACAO_ASSINATURA_MAX_AGE,
+            )
+        except signing.SignatureExpired:
+            formulario.add_error(
+                None,
+                "A prévia expirou. Visualize um novo plano antes de confirmar.",
+            )
+            return None
+        except signing.BadSignature:
+            formulario.add_error(
+                None,
+                "A prévia é inválida. Visualize um novo plano antes de confirmar.",
+            )
+            return None
+
+        nonce = payload.get("nonce") if isinstance(payload, dict) else None
+        if not self._consumir_nonce(request, nonce):
+            formulario.add_error(
+                None,
+                "Esta prévia já foi usada ou não pertence a esta sessão. "
+                "Visualize um novo plano.",
+            )
+            return None
+
+        if not formulario.is_valid():
+            formulario.add_error(
+                None,
+                "Os dados da captação não são mais válidos. Visualize um novo plano.",
+            )
+            return None
+
+        dados_canonicos = formulario.dados_canonicos()
+        chaves_esperadas = {*dados_canonicos, "nonce"}
+        if set(payload) != chaves_esperadas or any(
+            payload.get(chave) != valor
+            for chave, valor in dados_canonicos.items()
+        ):
+            formulario.add_error(
+                None,
+                "Os dados foram alterados depois da prévia. Visualize um novo plano.",
+            )
+            return None
+
+        try:
+            plano = self._planejar_captacao(formulario)
+        except CaptacaoCidadeError as exc:
+            formulario.add_error(
+                None,
+                f"Não foi possível confirmar: {exc} Visualize um novo plano.",
+            )
+            return None
+
+        try:
+            resultado = executar_captacao_cidade(plano)
+        except CaptacaoCidadeFalhaFinalizacaoError as exc:
+            self._registrar_falha_finalizacao(exc)
+            self._mensagem_resultado_seguro(request, exc.resultado)
+            referencia = getattr(exc.varredura, "pk", None) or "sem ID"
+            self.message_user(
+                request,
+                "Não foi possível persistir o encerramento da Varredura "
+                f"{referencia}; o status ERRO não está confirmado. "
+                "Os quadrantes seguintes não foram executados.",
+                messages.ERROR,
+            )
+        except CaptacaoCidadeParcialError as exc:
+            self._registrar_falha_parcial(exc)
+            self._mensagem_resultado_seguro(request, exc.resultado)
+            referencia = getattr(exc.varredura, "pk", None) or "sem ID"
+            self.message_user(
+                request,
+                f"A Varredura {referencia} foi registrada com ERRO. "
+                "Os quadrantes seguintes não foram executados.",
+                messages.ERROR,
+            )
+        except CaptacaoCidadeError as exc:
+            logger.warning(
+                "evento=captacao_admin_preflight_recusado "
+                "excecao_tipo=%s fase=preflight",
+                type(exc).__name__,
+            )
+            self.message_user(
+                request,
+                "A captação não foi iniciada. Visualize um novo plano.",
+                messages.ERROR,
+            )
+        else:
+            self._mensagem_sucesso(request, resultado)
+
+        return HttpResponseRedirect(reverse("admin:leads_varredura_changelist"))
+
+    @staticmethod
+    def _consumir_nonce(request, nonce: object) -> bool:
+        """Consome o nonce antes da execução, sem prometer trava transacional."""
+        if not isinstance(nonce, str):
+            return False
+        nonces = list(request.session.get(_CAPTACAO_NONCES_SESSION_KEY, ()))
+        if nonce not in nonces:
+            return False
+        nonces.remove(nonce)
+        request.session[_CAPTACAO_NONCES_SESSION_KEY] = nonces
+        return True
+
+    def _mensagem_sucesso(
+        self,
+        request,
+        resultado: ResultadoCaptacaoCidade,
+    ) -> None:
+        if resultado.franquia_esgotada:
+            self.message_user(
+                request,
+                f"Captação interrompida por franquia: "
+                f"{len(resultado.varreduras)} Varredura(s) registrada(s), "
+                f"{resultado.total_requisicoes} requisição(ões) e "
+                f"{resultado.total_novos} prospect(s) novo(s).",
+                messages.WARNING,
+            )
+            return
+
+        self.message_user(
+            request,
+            f"Captação concluída: {len(resultado.varreduras)} Varredura(s) "
+            f"registrada(s), {resultado.total_requisicoes} requisição(ões) e "
+            f"{resultado.total_novos} prospect(s) novo(s).",
+            messages.SUCCESS,
+        )
+
+    def _mensagem_resultado_seguro(
+        self,
+        request,
+        resultado: ResultadoCaptacaoCidade,
+    ) -> None:
+        rotulos = ", ".join(
+            varredura.quadrante.rotulo
+            for varredura in resultado.varreduras
+            if getattr(varredura, "quadrante", None) is not None
+        )
+        detalhe = f" Quadrantes registrados: {rotulos}." if rotulos else ""
+        self.message_user(
+            request,
+            f"Resultado preservado: {len(resultado.varreduras)} Varredura(s), "
+            f"{resultado.total_requisicoes} requisição(ões) e "
+            f"{resultado.total_novos} prospect(s) novo(s).{detalhe}",
+            messages.WARNING,
+        )
+
+    @staticmethod
+    def _registrar_falha_parcial(exc: CaptacaoCidadeParcialError) -> None:
+        ids_registrados = ",".join(
+            str(varredura.pk) for varredura in exc.resultado.varreduras
+        )
+        logger.error(
+            "evento=captacao_admin_falha_parcial causa_tipo=%s "
+            "varredura_id=%s quadrante=%s varreduras_registradas_ids=%s "
+            "varreduras_registradas_total=%d",
+            type(exc.causa).__name__,
+            getattr(exc.varredura, "pk", None),
+            getattr(exc.quadrante, "rotulo", None),
+            ids_registrados,
+            len(exc.resultado.varreduras),
+        )
+
+    @staticmethod
+    def _registrar_falha_finalizacao(
+        exc: CaptacaoCidadeFalhaFinalizacaoError,
+    ) -> None:
+        ids_seguros = ",".join(
+            str(varredura.pk) for varredura in exc.resultado.varreduras
+        )
+        logger.error(
+            "evento=captacao_admin_falha_finalizacao "
+            "causa_operacional_tipo=%s causa_finalizacao_tipo=%s "
+            "varredura_id=%s quadrante=%s varreduras_seguras_ids=%s "
+            "varreduras_seguras_total=%d",
+            type(exc.causa_operacional).__name__,
+            type(exc.causa_finalizacao).__name__,
+            getattr(exc.varredura, "pk", None),
+            getattr(exc.quadrante, "rotulo", None),
+            ids_seguros,
+            len(exc.resultado.varreduras),
+        )
 
 
 @admin.register(Quadrante)
