@@ -1,0 +1,157 @@
+/* VITRE Leads — filtros compactos de Prospect e Varredura */
+
+#changelist-filter {
+    position: relative !important;
+    inset: auto !important;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 0 !important;
+    height: auto !important;
+    margin: 8px 0 10px !important;
+    padding: 6px 8px !important;
+    box-sizing: border-box;
+    overflow: visible !important;
+}
+
+#changelist-filter > h2 {
+    display: none;
+}
+
+#changelist-filter > h3,
+#changelist-filter > a {
+    margin: 0 6px 0 0;
+    padding: 0;
+    white-space: nowrap;
+}
+
+#changelist-filter details {
+    position: relative;
+    width: auto;
+    min-width: 128px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--hairline-color);
+    border-radius: 6px;
+    background: var(--darkened-bg);
+}
+
+#changelist-filter details > summary {
+    padding: 6px 24px 6px 9px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    color: var(--body-fg);
+    font-weight: 600;
+}
+
+#changelist-filter details.vitre-filter-active {
+    border-color: var(--link-fg);
+    background: var(--selected-row);
+}
+
+#changelist-filter details.vitre-filter-active > summary {
+    color: var(--link-fg);
+}
+
+#changelist-filter .vitre-filter-value {
+    display: block;
+    max-width: 180px;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--body-quiet-color);
+    font-size: 0.82em;
+    font-weight: 400;
+    white-space: nowrap;
+}
+
+#changelist-filter details[open] {
+    z-index: 30;
+}
+
+#changelist-filter details > ul {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 40;
+    min-width: 210px;
+    max-width: min(340px, 80vw);
+    max-height: 320px;
+    margin: 0;
+    padding: 5px 0;
+    overflow-y: auto;
+    border: 1px solid var(--hairline-color);
+    border-radius: 6px;
+    background: var(--body-bg);
+    box-shadow: 0 5px 18px rgb(0 0 0 / 25%);
+}
+
+#changelist-filter details > ul li {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+#changelist-filter details > ul li a {
+    display: block;
+    padding: 6px 9px;
+    white-space: normal;
+}
+
+#changelist-filter details > ul li.selected a {
+    font-weight: 700;
+    background: var(--selected-row);
+}
+
+#changelist .changelist-form-container,
+#changelist-form,
+#changelist-form .results {
+    width: 100%;
+    max-width: 100%;
+}
+
+#changelist.filtered .results,
+#changelist.filtered .paginator,
+#changelist.filtered .actions {
+    margin-right: 0 !important;
+}
+
+@media (max-width: 767px) {
+    #changelist-filter {
+        align-items: stretch;
+        gap: 5px;
+    }
+
+    #changelist-filter > h3,
+    #changelist-filter > a {
+        width: 100%;
+    }
+
+    #changelist-filter details {
+        width: 100%;
+        min-width: 0;
+    }
+
+    #changelist-filter details > summary {
+        white-space: normal;
+    }
+
+    #changelist-filter .vitre-filter-value {
+        max-width: none;
+    }
+
+    #changelist-filter details > ul {
+        position: static;
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+        max-height: 260px;
+        margin-top: 4px;
+        box-shadow: none;
+    }
+}

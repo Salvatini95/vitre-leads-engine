@@ -10,7 +10,7 @@
 
 ## O que está pronto e verificado
 
-Bootstrap completo, 247 testes passando (`uv run pytest`), com 2 warnings preexistentes.
+Bootstrap completo, 252 testes passando (`uv run pytest`), com 2 warnings preexistentes.
 
 ### Incremento A1 — busca digitável no Admin
 
@@ -36,6 +36,47 @@ prática:
 
 O próximo incremento planejado é o **A2**, para melhorar a visibilidade e o
 espaço dos filtros principais sem criar uma tela paralela ao Django Admin.
+
+### Incremento A2.1 — filtros compactos no Admin
+
+Prospects e Varreduras passaram a usar uma apresentação mais compacta dos
+filtros nativos do Django Admin, sem criar uma tela paralela e sem alterar a
+semântica dos filtros existentes.
+
+O layout final mantém a busca antes dos filtros e posiciona os filtros logo
+abaixo dela, antes das ações e da tabela de resultados. Os grupos de filtro
+continuam usando os links e parâmetros nativos do Django, mas são apresentados
+como dropdowns compactos. Quando um filtro está ativo, o valor selecionado fica
+destacado visualmente.
+
+O escopo desta etapa ficou restrito a:
+
+- `ProspectAdmin` e `VarreduraAdmin`;
+- `leads/static/leads/admin_filtros.css`;
+- `leads/static/leads/admin_filtros.js`;
+- testes específicos em `tests/test_admin_filtros.py`.
+
+Foram preservados:
+
+- todos os filtros existentes;
+- a busca digitável implementada no A1;
+- o botão **Nova Captação** em Varreduras;
+- o `InteracaoAdmin`, que não carrega os novos assets;
+- models, migrations, localização factual, WhatsApp e fluxo comercial;
+- captação por Cidade, prévia assinada, nonce e execução.
+
+**Verificação do Incremento A2.1:**
+
+- `uv run python manage.py check` → sem problemas;
+- `uv run pytest tests/test_admin_filtros.py` → **5 testes passando**;
+- `uv run pytest tests/test_admin_busca.py tests/test_admin_filtros.py` →
+  **13 testes passando**;
+- `uv run pytest` → **252 testes passando**, com 2 warnings preexistentes;
+- `uv run python manage.py makemigrations --check` → `No changes detected`;
+- `git diff --check` → passou;
+- nenhuma migration, captação real ou API externa foi executada.
+
+A evolução de período/filtro por data permanece fora deste incremento.
 
 | Área | Arquivo | Estado |
 |---|---|---|

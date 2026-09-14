@@ -149,6 +149,12 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
     ordering = ("-total_avaliacoes",)
     actions = ("aprovar_para_funil", "marcar_revisado")
 
+    class Media:
+        css = {
+            "all": ("leads/admin_filtros.css",)
+        }
+        js = ("leads/admin_filtros.js",)
+
     @admin.display(description="Verificação")
     def tag_verificacao(self, obj: Prospect) -> str:
         return obj.tag_verificacao or "—"
@@ -538,6 +544,13 @@ class VarreduraAdmin(admin.ModelAdmin):
         "nicho__nome",
         "nicho__codigo",
     )
+
+    class Media:
+        css = {
+            "all": ("leads/admin_filtros.css",)
+        }
+        js = ("leads/admin_filtros.js",)
+
     readonly_fields = tuple(f.name for f in Varredura._meta.fields)
 
     def has_add_permission(self, request):
