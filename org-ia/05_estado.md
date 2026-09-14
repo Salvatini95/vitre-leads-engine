@@ -3,14 +3,39 @@
 > Documento de continuidade. Quem assumir a próxima sessão (Opus, Son Coder ou
 > Codex) lê este arquivo primeiro.
 
-**Última atualização:** 2026-09-11
+**Última atualização:** 2026-09-14
 **Fase:** Etapa 3 — captação por Cidade na CLI e no Admin
 
 ---
 
 ## O que está pronto e verificado
 
-Bootstrap completo, 239 testes passando (`uv run pytest`).
+Bootstrap completo, 247 testes passando (`uv run pytest`), com 2 warnings preexistentes.
+
+### Incremento A1 — busca digitável no Admin
+
+Sem alterar modelos, migrations, captação, localização factual, WhatsApp ou
+fluxo comercial, os changelists do Admin passaram a aceitar busca textual mais
+prática:
+
+- `ProspectAdmin`: nome, razão social, nome fantasia, telefone, CNPJ, cidade e
+  Nicho por nome ou código;
+- `VarreduraAdmin`: termo de busca, cidade e Nicho por nome ou código;
+- os filtros laterais e as colunas existentes foram preservados;
+- a busca textual continua compondo com os filtros existentes do Django Admin;
+- nenhuma interface visual personalizada de filtros foi criada neste incremento.
+
+**Verificação do Incremento A1:**
+
+- `uv run python manage.py check` → sem problemas;
+- `uv run pytest tests/test_admin_busca.py` → **8 testes passando**;
+- `uv run pytest` → **247 testes passando**, com 2 warnings preexistentes;
+- `uv run python manage.py makemigrations --check` → `No changes detected`;
+- `git diff --check` → passou;
+- nenhuma migration, grade, captação real ou API externa foi executada.
+
+O próximo incremento planejado é o **A2**, para melhorar a visibilidade e o
+espaço dos filtros principais sem criar uma tela paralela ao Django Admin.
 
 | Área | Arquivo | Estado |
 |---|---|---|

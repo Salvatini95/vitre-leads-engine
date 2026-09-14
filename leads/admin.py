@@ -132,7 +132,16 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
         "cidade",
         "origem",
     )
-    search_fields = ("nome", "razao_social", "nome_fantasia", "telefone", "cnpj")
+    search_fields = (
+        "nome",
+        "razao_social",
+        "nome_fantasia",
+        "telefone",
+        "cnpj",
+        "cidade",
+        "nicho__nome",
+        "nicho__codigo",
+    )
     list_editable = ("segmento", "status_funil")
     readonly_fields = ("origem", "origem_id", "criado_em", "atualizado_em", "varredura")
     inlines = (SocioInline, InteracaoInline, DescarteInline)
@@ -523,6 +532,12 @@ class VarreduraAdmin(admin.ModelAdmin):
     # Filtrar por fonte é o que permite comparar cobertura Google x Foursquare
     # no mesmo quadrante.
     list_filter = ("status", "fonte", "segmento", "nicho", "cidade")
+    search_fields = (
+        "termo_busca",
+        "cidade",
+        "nicho__nome",
+        "nicho__codigo",
+    )
     readonly_fields = tuple(f.name for f in Varredura._meta.fields)
 
     def has_add_permission(self, request):

@@ -156,6 +156,8 @@ explícita.
 uv run pytest
 ```
 
+Estado atual após o Incremento A1 do Admin: **247 testes passando**, com 2 warnings preexistentes.
+
 ## Stack
 
 Django 5.2 · SQLite · httpx · Google Places API (New) · Geocoding API.
