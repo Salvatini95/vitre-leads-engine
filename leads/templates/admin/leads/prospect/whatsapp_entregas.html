@@ -1,0 +1,61 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+
+  <h1>Mensagem de WhatsApp</h1>
+
+  <p>
+    <strong>Prospect:</strong> {{ prospect.nome }}<br>
+    <strong>Telefone:</strong> {{ prospect.telefone }}<br>
+    {% if prospect.nicho %}
+      <strong>Nicho:</strong> {{ prospect.nicho.nome }}<br>
+    {% endif %}
+    <strong>Cidade:</strong> {{ prospect.cidade|default:"—" }}
+  </p>
+
+  <p>
+    Revise e personalize a mensagem antes de abrir o WhatsApp.
+    O sistema não envia a mensagem automaticamente.
+  </p>
+
+  {% if erro %}
+    <p class="errornote">{{ erro }}</p>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+
+    <div class="form-row">
+      <label for="id_mensagem">
+        <strong>Mensagem:</strong>
+      </label>
+
+      <br>
+
+      <textarea
+        id="id_mensagem"
+        name="mensagem"
+        rows="10"
+        style="width:min(760px,100%);box-sizing:border-box;"
+      >{{ mensagem }}</textarea>
+    </div>
+
+    <div class="submit-row">
+      <input
+        type="submit"
+        value="Abrir no WhatsApp"
+        class="default"
+      >
+
+      <a
+        href="{% url 'admin:leads_prospect_changelist' %}"
+        style="margin-left:12px;"
+      >
+        Cancelar
+      </a>
+    </div>
+  </form>
+
+</div>
+{% endblock %}

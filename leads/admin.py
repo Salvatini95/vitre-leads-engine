@@ -7,8 +7,13 @@ usada várias vezes por dia e o que importa é velocidade.
 
 from __future__ import annotations
 
+import csv
 import logging
 import secrets
+from io import BytesIO
+
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from datetime import timedelta
 from urllib.parse import quote
 
@@ -18,7 +23,7 @@ from django.contrib.admin.widgets import AdminSplitDateTime
 from django.core import signing
 from django.core.exceptions import PermissionDenied
 from django.db.models import BooleanField, Case, QuerySet, Value, When
-from django.http import HttpResponseRedirect
+from django.http import HttpResponse, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
@@ -118,6 +123,7 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
         "status_funil",
         "tag_verificacao",
         "telefone",
+        "abrir_whatsapp_entregas",
         "site_evidencia",
         "total_avaliacoes",
         "rating",
@@ -147,7 +153,12 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
     inlines = (SocioInline, InteracaoInline, DescarteInline)
     # Mais avaliações primeiro: negócio consolidado e sem site é a melhor porta.
     ordering = ("-total_avaliacoes",)
-    actions = ("aprovar_para_funil", "marcar_revisado")
+    actions = (
+        "aprovar_para_funil",
+        "marcar_revisado",
+        "exportar_contatos_excel",
+        "exportar_contatos_csv",
+    )
 
     class Media:
         css = {
@@ -158,6 +169,246 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
     @admin.display(description="Verificação")
     def tag_verificacao(self, obj: Prospect) -> str:
         return obj.tag_verificacao or "—"
+
+    def get_urls(self):
+        urls = super().get_urls()
+
+        custom_urls = [
+            path(
+                "<path:object_id>/whatsapp-entregas/",
+                self.admin_site.admin_view(self.whatsapp_entregas_view),
+                name="leads_prospect_whatsapp_entregas",
+            )
+        ]
+
+        return custom_urls + urls
+
+    def _mensagem_entregas_padrao(self, obj: Prospect) -> str:
+        codigo_nicho = obj.nicho.codigo if obj.nicho_id else ""
+        cidade = obj.cidade or "sua região"
+
+        if codigo_nicho == "autopecas":
+            return (
+                "Olá! Tudo bem? Trabalhamos com entregas rápidas por motoboy "
+                f"em {cidade} e estamos entrando em contato com autopeças da região. "
+                "Vocês utilizam serviço de motoboy para entregar peças a oficinas "
+                "ou clientes?"
+            )
+
+        if codigo_nicho == "correspondentes_bancarios":
+            return (
+                "Olá! Tudo bem? Trabalhamos com entregas rápidas por motoboy e "
+                "estamos entrando em contato com correspondentes que atuam com "
+                "financiamento de veículos. Vocês utilizam motoboy para retirada "
+                "ou entrega de documentos, contratos ou outros materiais?"
+            )
+
+        return (
+            "Olá! Tudo bem? Trabalhamos com entregas rápidas por motoboy "
+            f"em {cidade} e estamos entrando em contato com empresas da região. "
+            "Vocês utilizam serviço de motoboy para entregas ou retiradas?"
+        )
+
+    @admin.display(description="WhatsApp")
+    def abrir_whatsapp_entregas(self, obj: Prospect):
+        if not obj.telefone or not obj.telefone_e_celular:
+            return "—"
+
+        url = reverse(
+            "admin:leads_prospect_whatsapp_entregas",
+            args=[obj.pk],
+        )
+
+        return format_html(
+            '<a href="{}" target="_blank" '
+            'style="background:#198754;color:white;padding:5px 9px;'
+            'border-radius:4px;text-decoration:none;white-space:nowrap;'
+            'font-weight:600;">Abrir WhatsApp</a>',
+            url,
+        )
+
+    def whatsapp_entregas_view(self, request, object_id):
+        obj = self.get_object(request, object_id)
+
+        if obj is None:
+            self.message_user(
+                request,
+                "Prospect não encontrado.",
+                messages.WARNING,
+            )
+            return HttpResponseRedirect(
+                reverse("admin:leads_prospect_changelist")
+            )
+
+        if not obj.telefone or not obj.telefone_e_celular:
+            self.message_user(
+                request,
+                "Este prospect não possui celular válido para abordagem.",
+                messages.ERROR,
+            )
+            return HttpResponseRedirect(
+                reverse("admin:leads_prospect_changelist")
+            )
+
+        mensagem = self._mensagem_entregas_padrao(obj)
+        erro = ""
+
+        if request.method == "POST":
+            mensagem = request.POST.get("mensagem", "").strip()
+
+            if not mensagem:
+                erro = "Digite uma mensagem antes de abrir o WhatsApp."
+            else:
+                numero = "".join(filter(str.isdigit, obj.telefone))
+
+                return HttpResponseRedirect(
+                    f"https://wa.me/{numero}?text={quote(mensagem)}"
+                )
+
+        contexto = {
+            **self.admin_site.each_context(request),
+            "title": "Mensagem de WhatsApp",
+            "opts": self.model._meta,
+            "prospect": obj,
+            "mensagem": mensagem,
+            "erro": erro,
+        }
+
+        return TemplateResponse(
+            request,
+            "admin/leads/prospect/whatsapp_entregas.html",
+            contexto,
+        )
+
+    @admin.action(description="Exportar contatos selecionados (Excel)")
+    def exportar_contatos_excel(self, request, queryset):
+        workbook = Workbook()
+        planilha = workbook.active
+        planilha.title = "Prospects"
+
+        cabecalho = [
+            "Nome",
+            "Telefone",
+            "Tipo telefone",
+            "Candidato a WhatsApp",
+            "Nicho",
+            "Cidade",
+            "Estado",
+            "Endereço",
+            "Origem",
+        ]
+
+        planilha.append(cabecalho)
+
+        for celula in planilha[1]:
+            celula.font = Font(bold=True)
+
+        for prospect in queryset.select_related("nicho").order_by(
+            "cidade",
+            "nome",
+        ):
+            planilha.append(
+                [
+                    prospect.nome,
+                    prospect.telefone,
+                    prospect.get_telefone_tipo_display(),
+                    "Sim" if prospect.telefone_e_celular else "Não",
+                    prospect.nicho.nome if prospect.nicho else "",
+                    prospect.cidade,
+                    prospect.estado,
+                    prospect.endereco,
+                    prospect.get_origem_display(),
+                ]
+            )
+
+        planilha.freeze_panes = "A2"
+        planilha.auto_filter.ref = planilha.dimensions
+
+        larguras = {
+            "A": 36,
+            "B": 20,
+            "C": 18,
+            "D": 22,
+            "E": 28,
+            "F": 22,
+            "G": 10,
+            "H": 45,
+            "I": 18,
+        }
+
+        for coluna, largura in larguras.items():
+            planilha.column_dimensions[coluna].width = largura
+
+        # Garante que telefone seja tratado como texto pelo Excel.
+        for celula in planilha["B"][1:]:
+            celula.number_format = "@"
+
+        arquivo = BytesIO()
+        workbook.save(arquivo)
+        arquivo.seek(0)
+
+        resposta = HttpResponse(
+            arquivo.getvalue(),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+        )
+
+        resposta["Content-Disposition"] = (
+            'attachment; filename="prospects_contatos.xlsx"'
+        )
+
+        return resposta
+
+    @admin.action(description="Exportar contatos selecionados (CSV)")
+    def exportar_contatos_csv(self, request, queryset):
+        resposta = HttpResponse(
+            content_type="text/csv; charset=utf-8"
+        )
+
+        resposta["Content-Disposition"] = (
+            'attachment; filename="prospects_contatos.csv"'
+        )
+
+        # BOM facilita abertura correta de acentos no Excel.
+        resposta.write("\ufeff")
+
+        writer = csv.writer(resposta)
+
+        writer.writerow(
+            [
+                "Nome",
+                "Telefone",
+                "Tipo telefone",
+                "Candidato a WhatsApp",
+                "Nicho",
+                "Cidade",
+                "Estado",
+                "Endereço",
+                "Origem",
+            ]
+        )
+
+        for prospect in queryset.select_related("nicho").order_by(
+            "cidade",
+            "nome",
+        ):
+            writer.writerow(
+                [
+                    prospect.nome,
+                    prospect.telefone,
+                    prospect.get_telefone_tipo_display(),
+                    "Sim" if prospect.telefone_e_celular else "Não",
+                    prospect.nicho.nome if prospect.nicho else "",
+                    prospect.cidade,
+                    prospect.estado,
+                    prospect.endereco,
+                    prospect.get_origem_display(),
+                ]
+            )
+
+        return resposta
 
     @admin.action(description="Aprovar para o funil (NOVO → A iniciar)")
     def aprovar_para_funil(self, request, queryset):
