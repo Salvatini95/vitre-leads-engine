@@ -124,6 +124,7 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
         "tag_verificacao",
         "telefone",
         "abrir_whatsapp_entregas",
+        "abrir_whatsapp_retorno",
         "site_evidencia",
         "total_avaliacoes",
         "rating",
@@ -178,7 +179,12 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
                 "<path:object_id>/whatsapp-entregas/",
                 self.admin_site.admin_view(self.whatsapp_entregas_view),
                 name="leads_prospect_whatsapp_entregas",
-            )
+            ),
+            path(
+                "<path:object_id>/whatsapp-retorno/",
+                self.admin_site.admin_view(self.whatsapp_retorno_view),
+                name="leads_prospect_whatsapp_retorno",
+            ),
         ]
 
         return custom_urls + urls
@@ -197,10 +203,18 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
 
         if codigo_nicho == "correspondentes_bancarios":
             return (
-                "Olá! Tudo bem? Trabalhamos com entregas rápidas por motoboy e "
-                "estamos entrando em contato com correspondentes que atuam com "
-                "financiamento de veículos. Vocês utilizam motoboy para retirada "
-                "ou entrega de documentos, contratos ou outros materiais?"
+                "Oi, tudo bem? Meu nome é Guilherme. Sou autônomo e trabalho com "
+                "compra e venda de veículos, sempre com clientes que precisam de "
+                "financiamento.\n\n"
+                "Vi que vocês atuam como correspondentes bancários e queria "
+                "verificar uma possibilidade com vocês. Estou com uma venda já "
+                "encaminhada e o cliente precisa financiar o veículo. Atualmente "
+                "estou com a procuração e toda a documentação do carro, porém o "
+                "veículo ainda não está no meu nome.\n\n"
+                "Vocês conseguem analisar esse tipo de operação e verificar se "
+                "existe alguma forma de realizar o financiamento mesmo estando "
+                "com a procuração? Caso seja necessário algum procedimento ou "
+                "documentação adicional, posso providenciar."
             )
 
         return (
@@ -225,6 +239,92 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
             'border-radius:4px;text-decoration:none;white-space:nowrap;'
             'font-weight:600;">Abrir WhatsApp</a>',
             url,
+        )
+
+    def _mensagem_correspondente_retorno(self, obj: Prospect) -> str:
+        return (
+            "Perfeito, obrigado pelo retorno. Nesse caso, posso te passar os "
+            "dados do veículo e do comprador para uma pré-análise. Estou com a "
+            "procuração e toda a documentação do veículo em mãos. Quais "
+            "documentos e informações vocês precisam para verificar se essa "
+            "operação pode ser feita?"
+        )
+
+    @admin.display(description="2ª mensagem")
+    def abrir_whatsapp_retorno(self, obj: Prospect):
+        codigo_nicho = obj.nicho.codigo if obj.nicho_id else ""
+
+        if (
+            codigo_nicho != "correspondentes_bancarios"
+            or not obj.telefone
+            or not obj.telefone_e_celular
+        ):
+            return "—"
+
+        url = reverse(
+            "admin:leads_prospect_whatsapp_retorno",
+            args=[obj.pk],
+        )
+
+        return format_html(
+            '<a href="{}" target="_blank" '
+            'style="background:#0d6efd;color:white;padding:5px 9px;'
+            'border-radius:4px;text-decoration:none;white-space:nowrap;">'
+            '2ª mensagem</a>',
+            url,
+        )
+
+    def whatsapp_retorno_view(self, request, object_id):
+        obj = self.get_object(request, object_id)
+
+        if obj is None:
+            return HttpResponseRedirect(
+                reverse("admin:leads_prospect_changelist")
+            )
+
+        codigo_nicho = obj.nicho.codigo if obj.nicho_id else ""
+
+        if (
+            codigo_nicho != "correspondentes_bancarios"
+            or not obj.telefone
+            or not obj.telefone_e_celular
+        ):
+            return HttpResponseRedirect(
+                reverse("admin:leads_prospect_changelist")
+            )
+
+        mensagem = self._mensagem_correspondente_retorno(obj)
+        erro = ""
+
+        if request.method == "POST":
+            mensagem = request.POST.get("mensagem", "").strip()
+
+            if not mensagem:
+                erro = "Digite uma mensagem antes de abrir o WhatsApp."
+            else:
+                numero = "".join(
+                    caractere
+                    for caractere in obj.telefone
+                    if caractere.isdigit()
+                )
+
+                return HttpResponseRedirect(
+                    f"https://wa.me/{numero}?text={quote(mensagem)}"
+                )
+
+        contexto = {
+            **self.admin_site.each_context(request),
+            "title": "2ª mensagem no WhatsApp",
+            "opts": self.model._meta,
+            "prospect": obj,
+            "mensagem": mensagem,
+            "erro": erro,
+        }
+
+        return TemplateResponse(
+            request,
+            "admin/leads/prospect/whatsapp_entregas.html",
+            contexto,
         )
 
     def whatsapp_entregas_view(self, request, object_id):
