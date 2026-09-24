@@ -51,7 +51,7 @@ def quadrante(db):
 
 
 def _fake_coletar(candidatos, vereditos):
-    async def _coletar(texto_query, celula, fonte=None, segmento=None):
+    async def _coletar(texto_query, celula, fonte=None, segmento=None, nicho_codigo=None):
         return captacao.Coleta(
             candidatos=candidatos, requisicoes=1, vereditos=vereditos
         )

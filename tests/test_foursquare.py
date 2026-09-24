@@ -507,3 +507,98 @@ async def test_erro_4xx_nao_e_retentado():
 def test_sem_api_key_falha_cedo():
     with pytest.raises(ValueError, match="FOURSQUARE_API_KEY ausente"):
         FoursquareSource("")
+
+
+@pytest.mark.asyncio
+async def test_nicho_correspondentes_bancarios_usa_categoria():
+    def responder(request):
+        assert "query" not in request.url.params
+        categorias = request.url.params["fsq_category_ids"].split(",")
+        assert "63be6904847c3692a84b9b3f" in categorias
+        assert "63be6904847c3692a84b9b44" in categorias
+        return httpx.Response(200, json={"results": []})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(responder)
+    ) as cliente:
+        async with FoursquareSource(
+            "chave",
+            http_client=cliente,
+        ) as fonte:
+            await fonte.buscar(
+                "financiamento de veículos em Curitiba PR",
+                CELULA,
+                "OUTRO",
+                "correspondentes_bancarios",
+            )
+
+
+@pytest.mark.asyncio
+async def test_nicho_autopecas_usa_categoria():
+    def responder(request):
+        assert "query" not in request.url.params
+        assert (
+            request.url.params["fsq_category_ids"]
+            == "63be6904847c3692a84b9be6"
+        )
+        return httpx.Response(200, json={"results": []})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(responder)
+    ) as cliente:
+        async with FoursquareSource(
+            "chave",
+            http_client=cliente,
+        ) as fonte:
+            await fonte.buscar(
+                "auto peças em Maringá PR",
+                CELULA,
+                "OUTRO",
+                "autopecas",
+            )
+
+
+@pytest.mark.asyncio
+async def test_nicho_sem_categoria_mantem_categoria_do_segmento():
+    def responder(request):
+        assert "query" not in request.url.params
+        assert "fsq_category_ids" in request.url.params
+        return httpx.Response(200, json={"results": []})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(responder)
+    ) as cliente:
+        async with FoursquareSource(
+            "chave",
+            http_client=cliente,
+        ) as fonte:
+            await fonte.buscar(
+                "salão em Maringá PR",
+                CELULA,
+                "SALAO",
+                "nicho_qualquer",
+            )
+
+
+@pytest.mark.asyncio
+async def test_nicho_e_segmento_sem_categoria_caem_no_texto():
+    consulta = "tatuagem em Maringá PR"
+
+    def responder(request):
+        assert request.url.params["query"] == consulta
+        assert "fsq_category_ids" not in request.url.params
+        return httpx.Response(200, json={"results": []})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(responder)
+    ) as cliente:
+        async with FoursquareSource(
+            "chave",
+            http_client=cliente,
+        ) as fonte:
+            await fonte.buscar(
+                consulta,
+                CELULA,
+                "OUTRO",
+                "nicho_qualquer",
+            )

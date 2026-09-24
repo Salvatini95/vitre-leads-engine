@@ -142,6 +142,7 @@ async def _coletar(
     celula: CelulaGrade | None,
     fonte: str = FONTE_PADRAO,
     segmento: str | None = None,
+    nicho_codigo: str | None = None,
 ) -> Coleta:
     """Parte de rede: busca na fonte e valida o site de cada candidato.
 
@@ -159,7 +160,12 @@ async def _coletar(
     ("não tem site") não muda porque o endereço veio de outra API.
     """
     async with criar_fonte(fonte) as cliente:
-        resultado = await cliente.buscar(texto_query, celula, segmento)
+        resultado = await cliente.buscar(
+            texto_query,
+            celula,
+            segmento,
+            nicho_codigo,
+        )
 
     candidatos = [c for c in resultado.candidatos if c.ativo]
     fechados = [c for c in resultado.candidatos if not c.ativo]
@@ -476,7 +482,15 @@ def executar_varredura(
             else None
         )
 
-        coleta = asyncio.run(_coletar(consulta, celula, fonte, segmento))
+        coleta = asyncio.run(
+            _coletar(
+                consulta,
+                celula,
+                fonte,
+                segmento,
+                nicho.codigo,
+            )
+        )
         sem_site, novos = _persistir(
             varredura,
             coleta.candidatos,

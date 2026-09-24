@@ -472,7 +472,7 @@ def test_servico_interrompe_com_seguranca_quando_franquia_acaba(
         fonte="google_places",
     )
 
-    async def coleta_falsa(_consulta, _celula, _fonte, _segmento):
+    async def coleta_falsa(_consulta, _celula, _fonte, _segmento, _nicho_codigo=None):
         return captacao.Coleta(
             candidatos=[],
             requisicoes=1,
@@ -561,7 +561,7 @@ def test_erro_inesperado_depois_da_criacao_finaliza_varredura_como_erro(
 def _simular_falha_parcial_no_segundo_quadrante(monkeypatch):
     executados = []
 
-    async def coleta_falsa(_consulta, celula, _fonte, _segmento):
+    async def coleta_falsa(_consulta, celula, _fonte, _segmento, _nicho_codigo=None):
         executados.append(celula.rotulo)
         if celula.rotulo == "Q1":
             return captacao.Coleta(candidatos=[], requisicoes=1, vereditos=[])
@@ -578,7 +578,7 @@ def _simular_falha_de_finalizacao_no_segundo_quadrante(monkeypatch):
     causa_operacional = RuntimeError("falha operacional com dado sigiloso")
     causa_finalizacao = RuntimeError("falha ao salvar estado")
 
-    async def coleta_falsa(_consulta, celula, _fonte, _segmento):
+    async def coleta_falsa(_consulta, celula, _fonte, _segmento, _nicho_codigo=None):
         executados.append(celula.rotulo)
         if celula.rotulo == "Q1":
             return captacao.Coleta(candidatos=[], requisicoes=1, vereditos=[])

@@ -62,6 +62,7 @@ class FonteDeProspects(ABC):
         texto_query: str,
         celula: CelulaGrade | None = None,
         segmento: str | None = None,
+        nicho_codigo: str | None = None,
     ) -> ResultadoBusca:
         """Busca paginada. Sem `celula`, busca sem recorte geográfico.
 

@@ -150,7 +150,13 @@ class _FonteFalsa:
     async def __aexit__(self, *_exc):
         return None
 
-    async def buscar(self, texto_query, celula=None, segmento=None):
+    async def buscar(
+        self,
+        texto_query,
+        celula=None,
+        segmento=None,
+        nicho_codigo=None,
+    ):
         from leads.sources.models import ResultadoBusca
 
         return ResultadoBusca(candidatos=self._candidatos, total_requisicoes=1)

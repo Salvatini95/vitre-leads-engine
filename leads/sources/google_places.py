@@ -155,13 +155,14 @@ class GooglePlacesSource(FonteDeProspects):
         texto_query: str,
         celula: CelulaGrade | None = None,
         segmento: str | None = None,
+        nicho_codigo: str | None = None,
     ) -> ResultadoBusca:
         """Busca paginada. Sem `celula`, busca sem recorte geográfico.
 
-        `segmento` é ignorado aqui de propósito: o Text Search do Google
-        entende a frase em português direto, e o segmento já está dentro dela.
-        O parâmetro existe no contrato para a Foursquare, que precisa dele
-        (ver `leads.sources.base`).
+        `segmento` e `nicho_codigo` são ignorados aqui de propósito: o Text
+        Search do Google entende a frase em português direto. Esses parâmetros
+        existem no contrato comum porque outras fontes, como a Foursquare,
+        precisam traduzi-los para categorias próprias.
 
         Raises:
             BuscaParcialError: falha de rede/HTTP, carregando o que já foi

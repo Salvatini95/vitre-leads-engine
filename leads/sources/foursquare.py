@@ -155,6 +155,21 @@ _CATEGORIAS_POR_SEGMENTO: dict[str, tuple[str, ...]] = {
     "SOBRANCELHA": (_HAIR_REMOVAL, _BELEZA_GENERICA),
 }
 
+# Nicho comercial da VITRE -> categorias da Foursquare.
+# Isso fica na integração, não no model Nicho, para não acoplar o domínio
+# comercial à taxonomia de uma fonte externa.
+_BANKING_AND_FINANCES = "63be6904847c3692a84b9b3f"
+_LOANS_AGENCIES = "63be6904847c3692a84b9b44"
+_CAR_PARTS_AND_ACCESSORIES = "63be6904847c3692a84b9be6"
+
+_CATEGORIAS_POR_NICHO: dict[str, tuple[str, ...]] = {
+    "autopecas": (_CAR_PARTS_AND_ACCESSORIES,),
+    "correspondentes_bancarios": (
+        _BANKING_AND_FINANCES,
+        _LOANS_AGENCIES,
+    ),
+}
+
 _LINK_NEXT = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
 
 
@@ -259,6 +274,7 @@ class FoursquareSource(FonteDeProspects):
         texto_query: str,
         celula: CelulaGrade | None = None,
         segmento: str | None = None,
+        nicho_codigo: str | None = None,
     ) -> ResultadoBusca:
         """Busca paginada. Sem `celula`, busca sem recorte geográfico.
 
@@ -272,12 +288,26 @@ class FoursquareSource(FonteDeProspects):
         candidatos: list[ProspectCandidate] = []
         requisicoes = 0
         cursor: str | None = None
-        categorias = _CATEGORIAS_POR_SEGMENTO.get(segmento or "")
+        categorias = _CATEGORIAS_POR_NICHO.get(nicho_codigo or "")
+        origem_categoria = "nicho"
 
         if categorias is None:
+            categorias = _CATEGORIAS_POR_SEGMENTO.get(segmento or "")
+            origem_categoria = "segmento"
+
+        if categorias is None:
+            origem_categoria = "texto"
             logger.warning(
-                "Segmento %r sem categoria Foursquare mapeada — caindo na busca "
-                "por texto, que nesta API traz muito ruído.",
+                "Nicho %r e segmento %r sem categoria Foursquare mapeada — "
+                "caindo na busca por texto, que nesta API traz muito ruído.",
+                nicho_codigo,
+                segmento,
+            )
+        else:
+            logger.info(
+                "Busca Foursquare por categoria (%s): nicho=%r segmento=%r",
+                origem_categoria,
+                nicho_codigo,
                 segmento,
             )
 

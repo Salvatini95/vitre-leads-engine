@@ -43,7 +43,7 @@ def quadrante(db):
 def _fake_coletar(candidatos, vereditos, requisicoes=1, fechados=0):
     """Substitui a parte de rede por um retorno fixo."""
 
-    async def _coletar(texto_query, celula, fonte=None, segmento=None):
+    async def _coletar(texto_query, celula, fonte=None, segmento=None, nicho_codigo=None):
         return captacao.Coleta(
             candidatos=candidatos,
             requisicoes=requisicoes,
@@ -290,7 +290,7 @@ def test_fonte_desconhecida_falha_cedo(monkeypatch, quadrante):
 def test_erro_de_busca_grava_o_custo_ja_consumido(monkeypatch, quadrante):
     """Requisição gasta tem de contar na franquia mesmo com varredura em erro."""
 
-    async def _coletar_falho(texto_query, celula, fonte=None, segmento=None):
+    async def _coletar_falho(texto_query, celula, fonte=None, segmento=None, nicho_codigo=None):
         raise BuscaParcialError(total_requisicoes=2, candidatos=[])
 
     monkeypatch.setattr(captacao, "_coletar", _coletar_falho)
