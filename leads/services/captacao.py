@@ -23,6 +23,7 @@ Regras de negócio que vivem aqui:
 from __future__ import annotations
 
 import asyncio
+import unicodedata
 import logging
 import math
 from dataclasses import dataclass
@@ -46,6 +47,7 @@ from leads.models import (
     Varredura,
 )
 from leads.services.grade import CelulaGrade
+from leads.services.opcoes_captacao import OpcoesCaptacao, corresponde_ao_perfil
 from leads.sources import FONTE_PADRAO, classe_da_fonte, criar_fonte
 from leads.sources.models import BuscaParcialError, ProspectCandidate
 from leads.utils.telefone import analisar as analisar_telefone
@@ -122,6 +124,46 @@ def saldo_da_franquia(fonte: str = FONTE_PADRAO) -> int:
     return max(0, teto_da_franquia(fonte) - consumo_do_mes(fonte))
 
 
+_TERMOS_RELEVANCIA_POR_NICHO: dict[str, tuple[str, ...]] = {
+    "correspondentes_bancarios": (
+        "correspond",
+        "promotora",
+        "cred",
+        "financeira",
+        "financ",
+        "emprest",
+        "consorc",
+    ),
+}
+
+
+def _texto_busca_normalizado(valor: str) -> str:
+    normalizado = unicodedata.normalize("NFKD", valor or "")
+    sem_acentos = "".join(
+        caractere
+        for caractere in normalizado
+        if not unicodedata.combining(caractere)
+    )
+    return sem_acentos.casefold()
+
+
+def _candidato_relevante_para_nicho(
+    candidato: ProspectCandidate,
+    nicho_codigo: str | None,
+) -> bool:
+    termos = _TERMOS_RELEVANCIA_POR_NICHO.get(nicho_codigo or "")
+
+    if not termos:
+        return True
+
+    nome = _texto_busca_normalizado(candidato.nome)
+
+    return any(
+        termo in nome
+        for termo in termos
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Coleta:
     """Saída da parte de rede de uma varredura.
@@ -143,6 +185,11 @@ async def _coletar(
     fonte: str = FONTE_PADRAO,
     segmento: str | None = None,
     nicho_codigo: str | None = None,
+    *,
+    modo_busca: str = "automatico",
+    perfil_resultados: str = "padrao",
+    somente_celular: bool = False,
+    termo: str | None = None,
 ) -> Coleta:
     """Parte de rede: busca na fonte e valida o site de cada candidato.
 
@@ -161,14 +208,44 @@ async def _coletar(
     """
     async with criar_fonte(fonte) as cliente:
         resultado = await cliente.buscar(
-            texto_query,
+            (termo if modo_busca != "automatico" and termo else texto_query),
             celula,
             segmento,
             nicho_codigo,
+            **({"modo_busca": modo_busca} if modo_busca != "automatico" else {}),
         )
 
-    candidatos = [c for c in resultado.candidatos if c.ativo]
-    fechados = [c for c in resultado.candidatos if not c.ativo]
+    candidatos_ativos = [
+        c for c in resultado.candidatos
+        if c.ativo
+    ]
+    fechados = [
+        c for c in resultado.candidatos
+        if not c.ativo
+    ]
+
+    candidatos = [
+        candidato
+        for candidato in candidatos_ativos
+        if (
+            (_candidato_relevante_para_nicho(candidato, nicho_codigo)
+             if perfil_resultados == "padrao"
+             else corresponde_ao_perfil(candidato, perfil_resultados))
+            and (not somente_celular or analisar_telefone(candidato.telefone).e_celular)
+        )
+    ]
+
+    rejeitados_relevancia = (
+        len(candidatos_ativos)
+        - len(candidatos)
+    )
+
+    if rejeitados_relevancia:
+        logger.info(
+            "%d resultado(s) rejeitado(s) por baixa relevância para o nicho %r",
+            rejeitados_relevancia,
+            nicho_codigo,
+        )
 
     for candidato in fechados:
         logger.info(
@@ -228,6 +305,8 @@ def _persistir(
     candidatos: list[ProspectCandidate],
     vereditos: list[SiteVerdict],
     site_confiavel: bool = True,
+    *,
+    incluir_com_site: bool = False,
 ) -> tuple[int, int]:
     """Grava os candidatos SEM site. Devolve (sem_site, novos).
 
@@ -246,15 +325,19 @@ def _persistir(
     novos = 0
 
     for candidato, veredito in zip(candidatos, vereditos, strict=True):
-        if veredito.tem_site_real:
+        if veredito.tem_site_real and not incluir_com_site:
             continue
 
-        sem_site += 1
+        if not veredito.tem_site_real:
+            sem_site += 1
 
         if candidato.origem_id in banidos:
             continue
 
-        tem_site, status = _situacao_do_site(veredito, site_confiavel)
+        tem_site, status = (
+            (True, StatusFunil.NOVO) if veredito.tem_site_real
+            else _situacao_do_site(veredito, site_confiavel)
+        )
         telefone = analisar_telefone(candidato.telefone)
 
         existente = Prospect.objects.filter(
@@ -441,6 +524,11 @@ def executar_varredura(
     estado: str,
     quadrante: Quadrante | None = None,
     fonte: str = FONTE_PADRAO,
+    modo_busca: str = "automatico",
+    perfil_resultados: str = "padrao",
+    incluir_com_site: bool = False,
+    somente_celular: bool = False,
+    termo: str | None = None,
 ) -> Varredura:
     """Roda uma varredura completa e devolve o registro com os contadores.
 
@@ -451,6 +539,11 @@ def executar_varredura(
     Raises:
         FranquiaEsgotadaError: se o teto mensal DESTA fonte já foi atingido.
     """
+    opcoes = OpcoesCaptacao(modo_busca, perfil_resultados, incluir_com_site, somente_celular)
+    opcoes.validar(fonte)
+    if modo_busca == "categoria_texto":
+        from leads.sources.foursquare import descrever_busca
+        descrever_busca(modo_busca, termo or consulta, consulta, nicho.codigo, segmento)
     if saldo_da_franquia(fonte) <= 0:
         raise FranquiaEsgotadaError(
             f"Franquia mensal esgotada em {fonte} ({consumo_do_mes(fonte)}/"
@@ -489,6 +582,12 @@ def executar_varredura(
                 fonte,
                 segmento,
                 nicho.codigo,
+                **{
+                    **({"modo_busca": modo_busca, "termo": termo or consulta}
+                       if modo_busca != "automatico" else {}),
+                    **({"perfil_resultados": perfil_resultados} if perfil_resultados != "padrao" else {}),
+                    **({"somente_celular": True} if somente_celular else {}),
+                },
             )
         )
         sem_site, novos = _persistir(
@@ -496,6 +595,7 @@ def executar_varredura(
             coleta.candidatos,
             coleta.vereditos,
             site_confiavel=classe_da_fonte(fonte).SITE_CONFIAVEL,
+            **({"incluir_com_site": True} if incluir_com_site else {}),
         )
 
         varredura.total_requisicoes = coleta.requisicoes

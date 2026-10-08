@@ -22,18 +22,21 @@ from django.contrib import admin, messages
 from django.contrib.admin.widgets import AdminSplitDateTime
 from django.core import signing
 from django.core.exceptions import PermissionDenied
-from django.db.models import BooleanField, Case, QuerySet, Value, When
+from django.db.models import BooleanField, Case, Exists, OuterRef, QuerySet, Value, When
 from django.http import HttpResponse, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
+from leads.admin_cidades import ProspectCidadesFilter
 from leads.forms import CaptacaoCidadeForm
+from leads.services.opcoes_captacao import OpcoesCaptacao
 from leads.models import (
     Canal,
     Descarte,
     Interacao,
+    MotivoDescarte,
     Nicho,
     OrigemLocalizacao,
     Prospect,
@@ -52,7 +55,7 @@ from leads.services.captacao_cidade import (
     executar_captacao_cidade,
     planejar_captacao_cidade,
 )
-from leads.utils.telefone import TipoTelefone
+from leads.utils.telefone import TipoTelefone, analisar
 
 
 logger = logging.getLogger(__name__)
@@ -115,6 +118,70 @@ class NichoAdmin(admin.ModelAdmin):
         return ("codigo",) if obj else ()
 
 
+
+class ProspectWhatsAppFilter(admin.SimpleListFilter):
+    title = "WhatsApp"
+    parameter_name = "whatsapp"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("celular", "Com celular / candidato a WhatsApp"),
+            ("sem_celular", "Sem celular acionável"),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == "celular":
+            return queryset.filter(telefone_tipo=TipoTelefone.CELULAR)
+
+        if self.value() == "sem_celular":
+            return queryset.exclude(telefone_tipo=TipoTelefone.CELULAR)
+
+        return queryset
+
+
+class ProspectContatoWhatsAppFilter(admin.SimpleListFilter):
+    title = "Contato WhatsApp"
+    parameter_name = "contato_whatsapp"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("nao_abordado", "Ainda não abordado"),
+            ("primeira", "1ª mensagem aberta"),
+            ("segunda", "2ª mensagem aberta"),
+        )
+
+    def queryset(self, request, queryset):
+        primeira = Interacao.objects.filter(
+            prospect_id=OuterRef("pk"),
+            canal=Canal.WHATSAPP,
+            anotacao__startswith="[WHATSAPP_1]",
+        )
+        segunda = Interacao.objects.filter(
+            prospect_id=OuterRef("pk"),
+            canal=Canal.WHATSAPP,
+            anotacao__startswith="[WHATSAPP_2]",
+        )
+
+        queryset = queryset.annotate(
+            _tem_whatsapp_1=Exists(primeira),
+            _tem_whatsapp_2=Exists(segunda),
+        )
+
+        if self.value() == "nao_abordado":
+            return queryset.filter(_tem_whatsapp_1=False)
+
+        if self.value() == "primeira":
+            return queryset.filter(
+                _tem_whatsapp_1=True,
+                _tem_whatsapp_2=False,
+            )
+
+        if self.value() == "segunda":
+            return queryset.filter(_tem_whatsapp_2=True)
+
+        return queryset
+
+
 @admin.register(Prospect)
 class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
     list_display = (
@@ -131,12 +198,14 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
         "revisado_manualmente",
     )
     list_filter = (
+        ProspectWhatsAppFilter,
+        ProspectContatoWhatsAppFilter,
         "status_funil",
         "segmento",
         "nicho",
         "tem_site_real",
         "revisado_manualmente",
-        "cidade",
+        ProspectCidadesFilter,
         "origem",
     )
     search_fields = (
@@ -157,6 +226,7 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
     actions = (
         "aprovar_para_funil",
         "marcar_revisado",
+        "descartar_fora_do_perfil",
         "exportar_contatos_excel",
         "exportar_contatos_csv",
     )
@@ -170,6 +240,22 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
     @admin.display(description="Verificação")
     def tag_verificacao(self, obj: Prospect) -> str:
         return obj.tag_verificacao or "—"
+
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .exclude(descartes__banido=True)
+            .distinct()
+        )
+
+    def save_model(self, request, obj, form, change):
+        if "telefone" in form.changed_data:
+            telefone = analisar(obj.telefone)
+            obj.telefone = telefone.e164 or telefone.original
+            obj.telefone_tipo = telefone.tipo
+
+        super().save_model(request, obj, form, change)
 
     def get_urls(self):
         urls = super().get_urls()
@@ -206,8 +292,8 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
                 "Oi, tudo bem? Meu nome é Guilherme. Sou autônomo e trabalho com "
                 "compra e venda de veículos, sempre com clientes que precisam de "
                 "financiamento.\n\n"
-                "Vi que vocês atuam como correspondentes bancários e queria "
-                "verificar uma possibilidade com vocês. Estou com uma venda já "
+                "Vocês trabalham com financiamento de veículos como correspondentes "
+                "bancários? Queria verificar uma possibilidade. Estou com uma venda já "
                 "encaminhada e o cliente precisa financiar o veículo. Atualmente "
                 "estou com a procuração e toda a documentação do carro, porém o "
                 "veículo ainda não está no meu nome.\n\n"
@@ -244,20 +330,23 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
     def _mensagem_correspondente_retorno(self, obj: Prospect) -> str:
         return (
             "Perfeito, obrigado pelo retorno. Nesse caso, posso te passar os "
-            "dados do veículo e do comprador para uma pré-análise. Estou com a "
-            "procuração e toda a documentação do veículo em mãos. Quais "
-            "documentos e informações vocês precisam para verificar se essa "
-            "operação pode ser feita?"
+            "dados do veículo e do comprador para uma pré-análise."
         )
 
     @admin.display(description="2ª mensagem")
     def abrir_whatsapp_retorno(self, obj: Prospect):
         codigo_nicho = obj.nicho.codigo if obj.nicho_id else ""
 
+        primeira_aberta = obj.interacoes.filter(
+            canal=Canal.WHATSAPP,
+            anotacao__startswith="[WHATSAPP_1]",
+        ).exists()
+
         if (
             codigo_nicho != "correspondentes_bancarios"
             or not obj.telefone
             or not obj.telefone_e_celular
+            or not primeira_aberta
         ):
             return "—"
 
@@ -284,10 +373,16 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
 
         codigo_nicho = obj.nicho.codigo if obj.nicho_id else ""
 
+        primeira_aberta = obj.interacoes.filter(
+            canal=Canal.WHATSAPP,
+            anotacao__startswith="[WHATSAPP_1]",
+        ).exists()
+
         if (
             codigo_nicho != "correspondentes_bancarios"
             or not obj.telefone
             or not obj.telefone_e_celular
+            or not primeira_aberta
         ):
             return HttpResponseRedirect(
                 reverse("admin:leads_prospect_changelist")
@@ -306,6 +401,12 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
                     caractere
                     for caractere in obj.telefone
                     if caractere.isdigit()
+                )
+
+                Interacao.objects.create(
+                    prospect=obj,
+                    canal=Canal.WHATSAPP,
+                    anotacao=f"[WHATSAPP_2] {mensagem}",
                 )
 
                 return HttpResponseRedirect(
@@ -360,6 +461,12 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
                 erro = "Digite uma mensagem antes de abrir o WhatsApp."
             else:
                 numero = "".join(filter(str.isdigit, obj.telefone))
+
+                Interacao.objects.create(
+                    prospect=obj,
+                    canal=Canal.WHATSAPP,
+                    anotacao=f"[WHATSAPP_1] {mensagem}",
+                )
 
                 return HttpResponseRedirect(
                     f"https://wa.me/{numero}?text={quote(mensagem)}"
@@ -509,6 +616,40 @@ class ProspectAdmin(OrigemLocalizacaoAdminMixin, admin.ModelAdmin):
             )
 
         return resposta
+
+    @admin.action(description="Descartar selecionados — fora do perfil")
+    def descartar_fora_do_perfil(self, request, queryset):
+        prospects = list(queryset)
+        agora = timezone.now()
+
+        for prospect in prospects:
+            Descarte.objects.update_or_create(
+                prospect=prospect,
+                motivo=MotivoDescarte.FORA_DO_PERFIL,
+                defaults={
+                    "origem_id": prospect.origem_id,
+                    "observacao": (
+                        "Descartado manualmente no Admin: "
+                        "irrelevante para o nicho/campanha."
+                    ),
+                    "banido": True,
+                },
+            )
+
+        ids = [prospect.pk for prospect in prospects]
+
+        Prospect.objects.filter(pk__in=ids).update(
+            status_funil=StatusFunil.DESCARTADO,
+            ativo_no_funil=False,
+            revisado_manualmente=True,
+            atualizado_em=agora,
+        )
+
+        self.message_user(
+            request,
+            f"{len(prospects)} prospect(s) descartado(s) como fora do perfil.",
+            messages.SUCCESS,
+        )
 
     @admin.action(description="Aprovar para o funil (NOVO → A iniciar)")
     def aprovar_para_funil(self, request, queryset):
@@ -978,6 +1119,10 @@ class VarreduraAdmin(admin.ModelAdmin):
             estado=estado,
             fonte=dados["fonte"],
             quadrante_rotulo=dados["quadrante"] or None,
+            **OpcoesCaptacao(
+                dados["modo_busca"], dados["perfil_resultados"],
+                dados["incluir_com_site"], dados["somente_celular"],
+            ).argumentos(),
         )
 
     def _assinar_previa(self, request, formulario: CaptacaoCidadeForm) -> str:

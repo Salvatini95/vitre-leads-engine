@@ -8,6 +8,7 @@ from django.test import Client
 from django.urls import reverse
 
 from leads.admin import ProspectAdmin, VarreduraAdmin
+from leads.admin_cidades import ProspectCidadesFilter
 
 pytestmark = pytest.mark.django_db
 
@@ -41,13 +42,19 @@ def test_varredura_admin_carrega_assets_e_preserva_nova_captacao(cliente_admin):
 
 
 def test_prospect_admin_preserva_filtros_existentes():
-    assert ProspectAdmin.list_filter == (
+    assert ProspectAdmin.list_filter[0].__name__ == "ProspectWhatsAppFilter"
+    assert (
+        ProspectAdmin.list_filter[1].__name__
+        == "ProspectContatoWhatsAppFilter"
+    )
+
+    assert ProspectAdmin.list_filter[2:] == (
         "status_funil",
         "segmento",
         "nicho",
         "tem_site_real",
         "revisado_manualmente",
-        "cidade",
+        ProspectCidadesFilter,
         "origem",
     )
 

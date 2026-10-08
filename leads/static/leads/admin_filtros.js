@@ -2,8 +2,8 @@
     "use strict";
 
     function textoSelecionado(grupo) {
-        const selecionado = grupo.querySelector("li.selected a");
-        return selecionado ? selecionado.textContent.trim() : "";
+        const selecionados = Array.from(grupo.querySelectorAll("li.selected a"));
+        return selecionados.map((item) => item.textContent.trim()).join(", ");
     }
 
     function marcarFiltroAtivo(grupo) {
@@ -19,7 +19,7 @@
             anterior.remove();
         }
 
-        const ativo = valor && valor !== "Todos" && valor !== "All";
+        const ativo = valor && valor !== "Todos" && valor !== "All" && valor !== "Todas as cidades";
         grupo.classList.toggle("vitre-filter-active", Boolean(ativo));
 
         if (!ativo) {

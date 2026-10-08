@@ -20,6 +20,8 @@ que, ignoradas, corrompem dado em silêncio:
    (`fsq_category_ids`), com o texto usado só como último recurso, quando o
    segmento não tem categoria mapeada. Foi o que separou 20 salões reais de
    41 resultados de lixo no mesmo quadrante.
+   Esse comportamento fica preservado no modo automatico. Os modos texto
+   e categoria_texto são escolhas explícitas e enviam o termo da atividade.
 
 1. `rating` da Foursquare é 0–10; o do Google é 0–5. O contrato de
    `ProspectCandidate` é 0–5 (ver `leads.sources.base`), então a nota é
@@ -173,6 +175,20 @@ _CATEGORIAS_POR_NICHO: dict[str, tuple[str, ...]] = {
 _LINK_NEXT = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
 
 
+def descrever_busca(modo, termo, consulta, nicho_codigo, segmento):
+    categorias = (_CATEGORIAS_POR_NICHO.get(nicho_codigo)
+                  or _CATEGORIAS_POR_SEGMENTO.get(segmento))
+    if modo == "texto":
+        return f"Termo enviado: {termo}; sem categoria automática"
+    if modo == "categoria_texto":
+        if not categorias:
+            raise ValueError("Categoria + termo exige nicho ou segmento mapeado.")
+        return f"Categoria do nicho/segmento + termo enviado: {termo}"
+    if categorias:
+        return "Categorias do nicho/segmento; termo NÃO enviado à Foursquare"
+    return f"Termo enviado: {consulta}; nicho/segmento sem categoria mapeada"
+
+
 def _e_retentavel(exc: BaseException) -> bool:
     """5xx, 429 e falha de rede valem retry. 4xx (exceto 429) não."""
     if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
@@ -275,16 +291,20 @@ class FoursquareSource(FonteDeProspects):
         celula: CelulaGrade | None = None,
         segmento: str | None = None,
         nicho_codigo: str | None = None,
+        *,
+        modo_busca: str = "automatico",
     ) -> ResultadoBusca:
         """Busca paginada. Sem `celula`, busca sem recorte geográfico.
 
-        Com `segmento` mapeado, busca por categoria e IGNORA `texto_query` —
-        ver observação 0 no topo do módulo. Sem mapeamento, cai no texto.
+        No modo automatico, categoria mapeada ignora o texto (modo legado).
+        texto remove a categoria automática; categoria_texto combina os dois.
 
         Raises:
             BuscaParcialError: falha de rede/HTTP, carregando o que já foi
                 consumido da franquia até ali.
         """
+        if modo_busca not in {"automatico", "texto", "categoria_texto"}:
+            raise ValueError("Modo de busca Foursquare inválido.")
         candidatos: list[ProspectCandidate] = []
         requisicoes = 0
         cursor: str | None = None
@@ -294,6 +314,11 @@ class FoursquareSource(FonteDeProspects):
         if categorias is None:
             categorias = _CATEGORIAS_POR_SEGMENTO.get(segmento or "")
             origem_categoria = "segmento"
+
+        if modo_busca == "texto":
+            categorias = None
+        if modo_busca == "categoria_texto" and not categorias:
+            raise ValueError("Categoria + termo exige nicho ou segmento mapeado.")
 
         if categorias is None:
             origem_categoria = "texto"
@@ -314,7 +339,8 @@ class FoursquareSource(FonteDeProspects):
         for _ in range(_MAX_PAGINAS):
             try:
                 dados, cursor = await self._requisitar(
-                    texto_query, celula, cursor, categorias
+                    texto_query, celula, cursor, categorias,
+                    **({"usar_texto": True} if modo_busca == "categoria_texto" else {}),
                 )
             except Exception as exc:
                 raise BuscaParcialError(
@@ -382,17 +408,18 @@ class FoursquareSource(FonteDeProspects):
         celula: CelulaGrade | None,
         cursor: str | None,
         categorias: tuple[str, ...] | None,
+        *,
+        usar_texto: bool = False,
     ) -> tuple[dict[str, Any], str | None]:
         params: dict[str, Any] = {
             "limit": _TAMANHO_PAGINA,
             "fields": ",".join(self._campos),
         }
 
-        # Categoria e texto juntos estreitam demais: a categoria já é o
-        # filtro de segmento, e o texto ainda casaria contra o NOME.
+        # Combinação somente por escolha explícita; pode reduzir a cobertura.
         if categorias:
             params["fsq_category_ids"] = ",".join(categorias)
-        else:
+        if not categorias or usar_texto:
             params["query"] = texto_query
 
         if celula is not None:

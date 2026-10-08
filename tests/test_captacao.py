@@ -366,3 +366,55 @@ def test_falha_ao_persistir_erro_preserva_as_duas_causas(
 def test_query_montada_com_segmento_e_cidade(monkeypatch, quadrante):
     varredura = _rodar(monkeypatch, [_candidato()], [SEM_SITE], quadrante)
     assert varredura.termo_busca == "Salão de beleza em Maringá PR"
+
+
+
+def test_relevancia_correspondentes_bancarios():
+    relevantes = [
+        "Top Credito",
+        "Realiza Cred",
+        "Lexus Cred Credito Consignado",
+        "i9 Promotora e Corretora",
+        "Financeira Teste",
+        "Financiamento Fácil",
+        "Correspondente Bancário XP",
+        "Empréstimos Curitiba",
+        "Consórcio Paraná",
+    ]
+
+    irrelevantes = [
+        "Igreja Cristã de Curitiba",
+        "Hamburgueria Curitiba",
+        "Laboratório Unimed Curitiba",
+        "Santa Felicidade Yoga",
+        "Lumo Restaurante Curitiba",
+        "Believe Clínica de Estética",
+        "Banco do Brasil",
+        "Bradesco",
+        "Loterias Girassol",
+    ]
+
+    for nome in relevantes:
+        candidato = _candidato(nome=nome)
+        assert captacao._candidato_relevante_para_nicho(
+            candidato,
+            "correspondentes_bancarios",
+        )
+
+    for nome in irrelevantes:
+        candidato = _candidato(nome=nome)
+        assert not captacao._candidato_relevante_para_nicho(
+            candidato,
+            "correspondentes_bancarios",
+        )
+
+
+def test_relevancia_nao_afeta_nicho_sem_regra():
+    candidato = _candidato(
+        nome="Qualquer Empresa"
+    )
+
+    assert captacao._candidato_relevante_para_nicho(
+        candidato,
+        "outro_nicho",
+    )

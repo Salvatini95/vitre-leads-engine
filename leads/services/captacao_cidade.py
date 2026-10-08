@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from leads.models import Nicho, Quadrante, Segmento, Varredura
+from leads.services.opcoes_captacao import OpcoesCaptacao, PERFIS_RESULTADOS
 from leads.services.captacao import (
     FalhaFinalizacaoVarreduraError,
     FranquiaEsgotadaError,
@@ -47,6 +48,27 @@ class PlanoCaptacaoCidade:
     consumo_franquia: int
     teto_franquia: int
     saldo_franquia: int
+    modo_busca: str = "automatico"
+    perfil_resultados: str = "padrao"
+    incluir_com_site: bool = False
+    somente_celular: bool = False
+
+    @property
+    def opcoes(self):
+        return OpcoesCaptacao(self.modo_busca, self.perfil_resultados,
+                             self.incluir_com_site, self.somente_celular)
+
+    @property
+    def perfil_rotulo(self):
+        return dict(PERFIS_RESULTADOS)[self.perfil_resultados]
+
+    @property
+    def descricao_busca(self):
+        if self.fonte == "foursquare":
+            from leads.sources.foursquare import descrever_busca
+            return descrever_busca(self.modo_busca, self.termo, self.consulta,
+                                  self.nicho.codigo, self.segmento)
+        return f"Texto: {self.consulta}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,8 +140,17 @@ def planejar_captacao_cidade(
     estado: str,
     fonte: str = FONTE_PADRAO,
     quadrante_rotulo: str | None = None,
+    modo_busca: str = "automatico",
+    perfil_resultados: str = "padrao",
+    incluir_com_site: bool = False,
+    somente_celular: bool = False,
 ) -> PlanoCaptacaoCidade:
     """Planeja e estima sem exigir credencial, criar Varredura ou realizar HTTP."""
+    opcoes = OpcoesCaptacao(modo_busca, perfil_resultados, incluir_com_site, somente_celular)
+    try:
+        opcoes.validar(fonte)
+    except ValueError as exc:
+        raise CaptacaoCidadeError(str(exc)) from exc
     termo = termo.strip()
     if not termo:
         raise CaptacaoCidadeError("O termo da atividade não pode ser vazio.")
@@ -146,6 +177,12 @@ def planejar_captacao_cidade(
             f"Nicho '{nicho_codigo}' está inativo e não pode receber novas captações."
         )
 
+    if modo_busca == "categoria_texto":
+        from leads.sources.foursquare import descrever_busca
+        try:
+            descrever_busca(modo_busca, termo, termo, nicho.codigo, segmento)
+        except ValueError as exc:
+            raise CaptacaoCidadeError(str(exc)) from exc
     quadrantes = Quadrante.objects.filter(cidade=cidade, estado=estado)
     if quadrante_rotulo:
         quadrantes = quadrantes.filter(rotulo=quadrante_rotulo)
@@ -179,6 +216,10 @@ def planejar_captacao_cidade(
         consumo_franquia=consumo,
         teto_franquia=teto,
         saldo_franquia=max(0, teto - consumo),
+        modo_busca=modo_busca,
+        perfil_resultados=perfil_resultados,
+        incluir_com_site=incluir_com_site,
+        somente_celular=somente_celular,
     )
 
 
@@ -206,6 +247,8 @@ def executar_captacao_cidade(
                 estado=plano.estado,
                 quadrante=quadrante,
                 fonte=plano.fonte,
+                **plano.opcoes.argumentos(),
+                **({"termo": plano.termo} if plano.modo_busca != "automatico" else {}),
             )
         except FranquiaEsgotadaError as exc:
             franquia_esgotada = str(exc)

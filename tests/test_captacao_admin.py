@@ -127,7 +127,7 @@ def _serializar_controles_sem_botoes(formulario):
                 continue
             if tipo in {"checkbox", "radio"} and "checked" not in atributos:
                 continue
-            dados.appendlist(nome, atributos.get("value", ""))
+            dados.appendlist(nome, atributos.get("value", "on" if tipo in {"checkbox", "radio"} else ""))
         elif controle["tag"] == "select":
             opcoes = controle["opcoes"]
             selecionadas = [
@@ -323,6 +323,10 @@ def test_formulario_exibe_apenas_nichos_ativos_outro_e_fontes_do_registro(
         "localidade",
         "fonte",
         "quadrante",
+        "modo_busca",
+        "perfil_resultados",
+        "incluir_com_site",
+        "somente_celular",
     }
     html = resposta.content.decode()
     assert 'name="localidade"' in html
@@ -670,6 +674,10 @@ def test_payload_alterado_e_assinatura_expirada_exigem_nova_previa(
         "fonte",
         "quadrante",
         "nonce",
+        "modo_busca",
+        "perfil_resultados",
+        "incluir_com_site",
+        "somente_celular",
     }
     assert "localidade" not in payload
     assert payload["cidade"] == "Maringá"
@@ -1189,3 +1197,55 @@ def test_admin_nao_importa_management_command_e_erros_inesperados_propagam(
 
     with pytest.raises(RuntimeError, match="defeito"):
         cliente_admin.post(url_nova_captacao, dados)
+
+
+@pytest.mark.parametrize("campo,valor", [
+    ("modo_busca", "categoria_texto"), ("perfil_resultados", "financeiro"),
+    ("incluir_com_site", "1"), ("somente_celular", "1"),
+])
+def test_novos_filtros_nao_podem_mudar_depois_da_assinatura(
+    cliente_admin, url_nova_captacao, motoboys, quadrantes, monkeypatch, campo, valor,
+):
+    dados = _dados_formulario(nicho=str(motoboys.pk), fonte="foursquare", modo_busca="texto",
+                             perfil_resultados="veiculos", visualizar_plano="1")
+    resposta = cliente_admin.post(url_nova_captacao, dados)
+    assert resposta.context["plano"] is not None
+    dados.pop("visualizar_plano")
+    dados["assinatura_previa"] = resposta.context["assinatura_previa"]
+    dados["confirmar_captacao"] = "1"
+    dados[campo] = valor
+    monkeypatch.setattr(leads_admin, "executar_captacao_cidade", lambda plano: pytest.fail("assinatura adulterada"))
+    resposta = cliente_admin.post(url_nova_captacao, dados)
+    assert "alterados depois da prévia" in resposta.content.decode()
+    assert Varredura.objects.count() == 0
+
+
+def test_previa_e_confirmacao_replanejam_com_filtros_assinados(
+    cliente_admin, url_nova_captacao, motoboys, quadrantes, monkeypatch,
+):
+    planejador_real = leads_admin.planejar_captacao_cidade
+    planos = []
+    def planejar(**kwargs):
+        assert kwargs["modo_busca"] == "texto"
+        assert kwargs["perfil_resultados"] == "veiculos"
+        assert kwargs["incluir_com_site"] is True
+        assert kwargs["somente_celular"] is True
+        plano = planejador_real(**kwargs); planos.append(plano); return plano
+    executados = []
+    def executar(plano): executados.append(plano); return _resultado(plano)
+    monkeypatch.setattr(leads_admin, "planejar_captacao_cidade", planejar)
+    monkeypatch.setattr(leads_admin, "executar_captacao_cidade", executar)
+    dados = _dados_formulario(nicho=str(motoboys.pk), fonte="foursquare", modo_busca="texto",
+                             perfil_resultados="veiculos", incluir_com_site="1", somente_celular="1", visualizar_plano="1")
+    previa = cliente_admin.post(url_nova_captacao, dados)
+    assert "Termo enviado: motoboy; sem categoria automática" in previa.content.decode()
+    parser = _analisar_formulario_captacao(previa.content.decode())
+    post = _serializar_controles_sem_botoes(parser)
+    assert post["incluir_com_site"] == "on"
+    assert post["somente_celular"] == "on"
+    assert post["confirmar_captacao"] == "1"
+    resposta = cliente_admin.post(url_nova_captacao, post)
+    assert resposta.status_code == 302
+    assert len(planos) == 2
+    assert executados == [planos[1]]
+    assert executados[0] is not planos[0]

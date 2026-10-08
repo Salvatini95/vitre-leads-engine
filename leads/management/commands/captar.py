@@ -28,6 +28,7 @@ from leads.services.captacao_cidade import (
     planejar_captacao_cidade,
 )
 from leads.sources import FONTE_PADRAO, FONTES
+from leads.services.opcoes_captacao import MODOS_BUSCA, PERFIS_RESULTADOS, OpcoesCaptacao
 
 
 class Command(BaseCommand):
@@ -50,6 +51,10 @@ class Command(BaseCommand):
             "--termo",
             help="Atividade buscada, sem cidade ou estado.",
         )
+        parser.add_argument("--modo-busca", choices=list(dict(MODOS_BUSCA)), default="automatico")
+        parser.add_argument("--perfil-resultados", choices=list(dict(PERFIS_RESULTADOS)), default="padrao")
+        parser.add_argument("--incluir-com-site", action="store_true")
+        parser.add_argument("--somente-celular", action="store_true")
         parser.add_argument("--cidade", default=settings.CIDADE_PADRAO)
         parser.add_argument("--estado", default=settings.ESTADO_PADRAO)
         parser.add_argument(
@@ -87,6 +92,10 @@ class Command(BaseCommand):
                 estado=estado,
                 fonte=fonte,
                 quadrante_rotulo=opts["quadrante"],
+                **OpcoesCaptacao(
+                    opts["modo_busca"], opts["perfil_resultados"],
+                    opts["incluir_com_site"], opts["somente_celular"],
+                ).argumentos(),
             )
         except CaptacaoCidadeError as exc:
             raise CommandError(str(exc)) from exc
@@ -94,6 +103,11 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Segmento: {rotulo_segmento} | {cidade}/{estado} | "
             f"{len(plano.quadrantes)} quadrante(s) | fonte: {fonte}"
+        )
+        self.stdout.write(f"Busca efetiva: {plano.descricao_busca}")
+        self.stdout.write(
+            f"Perfil: {plano.perfil_resultados} | incluir com site: {plano.incluir_com_site} | "
+            f"somente celular: {plano.somente_celular} (WhatsApp não verificado)"
         )
         if modo_novo:
             self.stdout.write(

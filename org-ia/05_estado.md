@@ -10,7 +10,7 @@
 
 ## O que está pronto e verificado
 
-Bootstrap completo, 252 testes passando (`uv run pytest`), com 2 warnings preexistentes.
+Bootstrap completo, 301 testes passando (`uv run pytest`), com 2 warnings preexistentes.
 
 ### Incremento A1 — busca digitável no Admin
 
@@ -1001,3 +1001,19 @@ Prioridade agora:
 8. medir conversões.
 
 Evitar continuar adicionando funcionalidades sem necessidade observada no uso real.
+
+
+### Ajuste de precisão da captação — 2026-10-05
+
+- Base enviada pelo operador: 267 testes passando na cópia isolada.
+- Estado validado após ajuste: 301 testes passando, 2 warnings preexistentes.
+- Fonte Foursquare com modos explícitos: automatico, texto e categoria_texto.
+- Perfil padrão preservado; perfis financeiro e veiculos com indícios por nome/categoria.
+- Opções de incluir empresas com site e guardar somente celulares válidos.
+- Prévia explica a busca efetiva; novos filtros incluídos na assinatura e revalidados.
+- Mensagem de correspondentes pergunta sobre atuação, sem afirmar que foi comprovada.
+- Modelos, migrations, fontes de dados históricos e filas por status preservados.
+- Escopo continua Cidade; estado inteiro demanda grades e rodadas por cidade.
+- Filtros são heurísticos, WhatsApp não é verificado e a fonte não recupera telefone ausente.
+- Nenhuma captação real ou mudança no banco do operador foi executada na preparação.
+- Configurações de rodada não receberam armazenamento permanente nesta versão.

@@ -164,3 +164,49 @@ Estado atual após o Incremento A2.1 do Admin: **252 testes passando**, com 2 wa
 
 Django 5.2 · SQLite · httpx · Google Places API (New) · Geocoding API.
 Roda local, sem servidor e sem container.
+
+
+### Pesquisa mais precisa na Foursquare
+
+Em Nova Captação, escolha como pesquisar: categoria automática (comportamento
+anterior), termo digitado, ou categoria + termo. A prévia mostra a busca efetiva.
+Nos dois modos explícitos, a Foursquare recebe somente o termo da atividade;
+a localização continua restrita pelos cantos dos quadrantes. No modo automático,
+uma categoria mapeada ignora o termo: trocar apenas o texto pode repetir os resultados.
+
+Perfis opcionais filtram indícios de crédito/financiamento ou lojas/revendas de
+veículos no nome e na categoria devolvidos pela fonte. Categorias de alimentação
+e beleza são vetadas nesses perfis. Esses indícios não comprovam atividade
+de correspondente nem financiamento automotivo e podem excluir negócios relevantes.
+O perfil de revendas substitui o filtro financeiro do nicho, permitindo descobrir
+lojas em uma campanha de correspondentes sem exigir palavras de crédito no nome.
+
+“Incluir empresas com site” evita descartar uma empresa por já ter site; o site
+continua registrado e não a qualifica automaticamente para a campanha original de
+negócios sem site. “Guardar somente resultados com celular válido” é opcional:
+o formato não comprova WhatsApp e números ausentes não são recuperados.
+Os filtros locais não reduzem as requisições já consumidas pela API.
+
+Exemplo de prévia para lojas de veículos (sem consumo de API):
+
+```bash
+uv run python manage.py captar --nicho correspondentes_bancarios \
+  --termo "automóveis" --segmento OUTRO --cidade Joinville --estado SC \
+  --fonte foursquare --modo-busca texto --perfil-resultados veiculos \
+  --incluir-com-site --dry-run
+```
+
+Para crédito, use o perfil `financeiro` e termos separados como `financiamento`,
+`promotora` ou `crédito`. Categoria + termo pode restringir a lista excessivamente;
+compare primeiro uma rodada pequena e confira a qualidade antes de ampliar.
+
+Os novos filtros fazem parte do payload assinado; alterar qualquer um depois da
+prévia exige um plano novo. Confirmação, CSRF, nonce, franquia e replanejamento
+continuam ativos. O botão WhatsApp mantém a abertura manual, com mensagem editável
+e celular válido; não envia automaticamente nem confirma cadastro no WhatsApp.
+
+A abrangência continua por cidade com grade cadastrada. Santa Catarina inteira
+exige grades e execuções em várias cidades: Joinville não representa todo o estado.
+Nenhum histórico é apagado ou reclassificado por esta atualização. As opções da
+rodada ficam na prévia assinada, não em novas colunas de Varredura; o histórico
+continua guardando termo completo, fonte, cidade e quadrante.

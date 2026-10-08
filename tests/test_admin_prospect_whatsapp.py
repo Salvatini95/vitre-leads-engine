@@ -9,7 +9,7 @@ from django.test import Client
 from django.urls import reverse
 
 from leads.admin import ProspectAdmin
-from leads.models import Interacao, Nicho, Origem, Prospect, Segmento
+from leads.models import Canal, Interacao, Nicho, Origem, Prospect, Segmento
 from leads.utils.telefone import TipoTelefone
 
 
@@ -172,7 +172,16 @@ def test_post_abre_whatsapp_sem_alterar_prospect(
         Interacao.objects.filter(
             prospect=prospect_celular
         ).count()
-        == interacoes_antes
+        == interacoes_antes + 1
+    )
+
+    interacao = Interacao.objects.filter(
+        prospect=prospect_celular,
+        canal=Canal.WHATSAPP,
+    ).latest("criado_em")
+
+    assert interacao.anotacao == (
+        f"[WHATSAPP_1] {mensagem}"
     )
 
 

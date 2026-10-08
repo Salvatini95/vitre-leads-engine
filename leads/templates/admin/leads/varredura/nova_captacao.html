@@ -27,6 +27,7 @@
       width: 100%;
       min-height: 2.75rem;
     }
+    .captacao-campo input[type="checkbox"] { width: auto; min-height: auto; }
     .captacao-campo .help { margin: 0.35rem 0 0; padding: 0; }
     .captacao-plano dl {
       display: grid;
@@ -99,6 +100,10 @@
             <dt>Segmento</dt><dd>{{ segmento_rotulo }}</dd>
             <dt>Cidade/Estado</dt><dd>{{ plano.cidade }}/{{ plano.estado }}</dd>
             <dt>Fonte</dt><dd>{{ plano.fonte }}</dd>
+            <dt>Busca efetiva</dt><dd>{{ plano.descricao_busca }}</dd>
+            <dt>Perfil</dt><dd>{{ plano.perfil_rotulo }}</dd>
+            <dt>Empresas com site</dt><dd>{% if plano.incluir_com_site %}Incluídas{% else %}Excluídas quando o site é identificado{% endif %}</dd>
+            <dt>Telefone</dt><dd>{% if plano.somente_celular %}Somente formato de celular válido{% else %}Todos, inclusive sem telefone{% endif %}. WhatsApp não verificado.</dd>
             <dt>Quadrante</dt><dd>{% if formulario.cleaned_data.quadrante %}{{ formulario.cleaned_data.quadrante }}{% else %}todos{% endif %}</dd>
             <dt>Número de quadrantes</dt><dd>{{ plano.quadrantes|length }}</dd>
             <dt>Consumo atual</dt><dd>{{ plano.consumo_franquia }} requisição(ões)</dd>
